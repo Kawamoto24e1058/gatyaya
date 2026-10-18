@@ -18,6 +18,8 @@ export type RelicHook =
   | 'onSellApCost' // value: 出店の AP
   | 'onBaito' // value: バイト代
   | 'onNight' // value: 夜に化ける確率
+  | 'onRumorAccuracy' // value: 噂の的中率
+  | 'onDarkCatch' // value: 闇ルートで摘発される確率
   | 'onEvent' // TODO(Phase 2): イベント
   | 'onPayday'; // value: 今週の返済額
 
@@ -63,6 +65,7 @@ export const RELICS: Relic[] = [
   { id: 'lantern', name: '夜更かし行灯', glyph: '灯', rarity: 'common', description: '夜のうちに化ける確率 ×2', hooks: { onNight: (c) => c.value * 2 } },
   { id: 'goldthread', name: '金の糸', glyph: '糸', rarity: 'common', description: '色違いの売値 ×1.2', hooks: { onSellPrice: (c) => (parseStock(c.prizeId as string).shiny ? c.value * 1.2 : c.value) } },
   { id: 'apron', name: '働き者の前掛け', glyph: '働', rarity: 'common', description: 'バイト代 ×1.4', hooks: { onBaito: (c) => Math.round(c.value * 1.4) } },
+  { id: 'informant', name: '情報屋の耳', glyph: '耳', rarity: 'common', description: '噂が当たる確率 +20%', hooks: { onRumorAccuracy: (c) => c.value + 0.2 } },
   { id: 'whisk', name: 'かき混ぜ棒', glyph: '混', rarity: 'common', description: 'まぜる回数 +3', hooks: { onShuffles: (c) => c.value + 3 } },
 
   // ---- rare ----
@@ -90,6 +93,7 @@ export const RELICS: Relic[] = [
     description: 'ガチャで 6% の確率でレア度がひとつ上がる',
     hooks: { onGachaRoll: (c) => (Math.random() < 0.06 ? (nextRarity(c.value as Rarity) ?? c.value) : c.value) },
   },
+  { id: 'darkties', name: '闇のツテ', glyph: '闇', rarity: 'rare', description: '闇ルートで摘発されない', hooks: { onDarkCatch: () => 0 } },
   {
     id: 'genius',
     name: '借金の天才',

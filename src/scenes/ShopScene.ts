@@ -7,7 +7,9 @@ import { MACHINE_BY_ID, type GachaMachineDef } from '../data/machines';
 import { KIND_LABEL, prizesOf, SERIES, stockKey, type Prize } from '../data/prizes';
 import { RARITY_INFO, type Rarity } from '../data/rarity';
 import { Capsule } from '../game/Capsule';
+import { adjustedSeriesWeights } from '../game/events';
 import { RELIC_BY_ID, rollRelics, runHook } from '../game/relics';
+import { showKawaraban } from '../ui/Kawaraban';
 import { showRelicPicker } from '../ui/RelicPicker';
 import { omamoriKey } from '../ui/textures';
 import { addRelic, daysUntilPayday, dueAmount, inventoryCount, isPayday, jarCapacity, pullCost, S, save, saveNow, sellApCost, shufflesPerDay } from '../game/state';
@@ -107,6 +109,7 @@ export class ShopScene extends Phaser.Scene {
     this.confetti.setDepth(960);
 
     this.buildButtons();
+    this.buildKawarabanPin(top);
 
     // 保存済みのカプセルを上から降らせる
     // 降らせ終わるまでは、まだ出していない分もセーブに残す（途中でアプリを閉じても消えないように）
@@ -663,7 +666,7 @@ export class ShopScene extends Phaser.Scene {
 
   private rollPrize(r: Rarity): Prize {
     // TODO(Phase 2): 生産終了イベントで排出率を下げる、レリック「目利き」
-    const seriesId = weightedPick(this.def.seriesWeights);
+    const seriesId = weightedPick(adjustedSeriesWeights(S(), this.def.seriesWeights));
     return pick(prizesOf(seriesId, r));
   }
 
@@ -765,6 +768,34 @@ export class ShopScene extends Phaser.Scene {
     this.tweens.add({ targets: c, alpha: 1, x, duration: 260, ease: 'Back.easeOut' });
     this.time.delayedCall(200, () => sfx.play('stamp', { vol: 0.7 }));
     return c;
+  }
+
+  // ---------- 瓦版（噂） ----------
+
+  private openKawaraban(onClose?: () => void) {
+    this.machine.setInputEnabled(false);
+    showKawaraban(this, S().events, S().day, () => {
+      this.machine.setInputEnabled(true);
+      onClose?.();
+    });
+  }
+
+  /** 窓に貼った瓦版。タップで今朝の噂を読み直せる */
+  private buildKawarabanPin(top: number) {
+    const c = this.add.container(70, top + 196).setDepth(95).setAngle(-6);
+    const g = this.add.graphics();
+    drawPlate(g, -40, -26, 80, 52, 0xefe2c4, { radius: 4, shadow: 4, outline: 3, shine: false });
+    g.fillStyle(PAL.blood, 1);
+    g.fillRect(-40, -26, 80, 16);
+    c.add(g);
+    c.add(txt(this, 0, 8, '瓦版', 20, { color: CSS.ink }));
+    c.setSize(84, 56).setInteractive({ useHandCursor: true });
+    c.on('pointerdown', () => {
+      sfx.play('tap');
+      this.openKawaraban();
+    });
+    // 新しいニュースがある日は揺れて知らせる
+    if (S().events.news.length > 0) this.tweens.add({ targets: c, angle: 6, duration: 300, yoyo: true, repeat: 5 });
   }
 
   // ---------- 縁起物 ----------
@@ -922,8 +953,10 @@ export class ShopScene extends Phaser.Scene {
     const hot = SERIES.filter((se) => s.market.series[se.id].trend >= 1.8).map((se) => se.name);
     const sub = payday
       ? `今日は返済日！ 閉店後に ${dueAmount(s).toLocaleString('ja-JP')} 返済`
-      : hot.length > 0
-        ? `🔥 ${hot.join('・')} が高騰中！`
+      : s.events.news.length > 0
+        ? s.events.news[0]
+        : hot.length > 0
+          ? `🔥 ${hot.join('・')} が高騰中！`
         : `第${s.week}週 ・ 返済まで あと${daysUntilPayday(s)}日`;
     const t2 = txt(this, 0, 58, sub, 26, {
       color: payday ? '#ffd9cf' : CSS.cream,
@@ -938,11 +971,15 @@ export class ShopScene extends Phaser.Scene {
         { y, duration: 380, ease: 'Bounce.easeOut' },
         { y: -320, duration: 300, delay: payday ? 1700 : 1000, ease: 'Cubic.easeIn' },
       ],
-      onComplete: () => band.destroy(),
+      onComplete: () => {
+        band.destroy();
+        // のれんが上がったら瓦版（噂）→ 夜のうちに化けたカプセル
+        this.openKawaraban(() => {
+          if (S().nightChanges.length > 0) this.time.delayedCall(200, () => this.playNightChanges());
+        });
+      },
     });
     if (payday) this.time.delayedCall(380, () => sfx.play('rumble', { vol: 0.6 }));
-    // のれんが上がったあと、夜のうちに化けたカプセルを見せる
-    if (s.nightChanges.length > 0) this.time.delayedCall(payday ? 2300 : 1600, () => this.playNightChanges());
   }
 
   update() {

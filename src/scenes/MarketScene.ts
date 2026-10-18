@@ -7,11 +7,13 @@ import { sfx } from '../core/audio';
 import { fmt } from '../core/util';
 import { parseStock, SERIES, SHINY_MULT } from '../data/prizes';
 import { RARITY_INFO } from '../data/rarity';
-import { estimateSellTotal, saturationOf, sellOne, sellPrice, trendSign, type SeriesMarket } from '../game/market';
+import { activeOn, DARK_CATCH_RATE, EVENT_DEFS, eventMult, isBanned } from '../game/events';
+import { darkPrice, estimateSellTotal, saturationOf, sellDark, sellOne, sellPrice, trendSign, type SeriesMarket } from '../game/market';
+import { runHook } from '../game/relics';
 import { S, save } from '../game/state';
 import { Hud } from '../ui/Hud';
 import { ITEM_Y, makePrizeView, twinkle, VIEW_H, VIEW_W } from '../ui/PrizeView';
-import { Button, drawPlate, floatText, txt } from '../ui/widgets';
+import { Button, drawPlate, floatText, stamp, txt } from '../ui/widgets';
 
 const COLS = 3;
 const VIEW_SCALE = 0.62;
@@ -124,8 +126,14 @@ export class MarketScene extends Phaser.Scene {
       const col = Phaser.Display.Color.HexStringToColor(se.color).color;
       g.fillStyle(col, 0.9);
       g.fillRoundedRect(66, ry - 18, 14, 36, 4);
-      txt(this, 96, ry, se.name, 30, { originX: 0, color: '#f2efe4' });
+      txt(this, 96, ry, se.name, 26, { originX: 0, color: '#f2efe4' });
       this.drawWeekBars(marks, 330, ry, sm);
+      // かかっているイベント（📺 🏭 ⚠ 🚫）
+      const evs = activeOn(s, se.id);
+      if (evs.length > 0) {
+        const icons = txt(this, 322, ry, evs.map((e) => EVENT_DEFS[e.type].icon).join(''), 24, { originX: 1 });
+        this.tweens.add({ targets: icons, scale: 1.15, duration: 420, yoyo: true, repeat: -1 });
+      }
       drawTrendMark(marks, 626, ry, sm);
     });
     return y + h;
@@ -228,8 +236,9 @@ export class MarketScene extends Phaser.Scene {
       // 値動きの小札（シリーズ単位の矢印）
       const sm = s.market.series[p.seriesId];
       const sign = trendSign(sm);
-      const mark = sm.mode === 'boom' ? '🔥' : sign === 'up' ? '↑' : sign === 'down' ? '↓' : '→';
-      const tagColor = sm.mode === 'boom' ? PAL.mustard : sign === 'up' ? PAL.moss : sign === 'down' ? PAL.vermilion : 0x8a7f9a;
+      const banned = isBanned(s, p.seriesId);
+      const mark = banned ? '🚫' : sm.mode === 'boom' ? '🔥' : sign === 'up' ? '↑' : sign === 'down' ? '↓' : '→';
+      const tagColor = banned ? PAL.ink : sm.mode === 'boom' ? PAL.mustard : sign === 'up' ? PAL.moss : sign === 'down' ? PAL.vermilion : 0x8a7f9a;
       const tg = this.add.graphics();
       const ty = cy + (ITEM_Y - 110) * VIEW_SCALE;
       drawPlate(tg, cx - A.cellW / 2 - 4, ty, 46, 38, tagColor, { radius: 8, shadow: 3, outline: 3, shine: false });
@@ -322,12 +331,33 @@ export class MarketScene extends Phaser.Scene {
     c.add(txt(this, 360, tagY - 22, '1個の売値', 22, { color: CSS.inkSoft }));
     c.add(txt(this, 360, tagY + 26, fmt(price), 64, { color: CSS.bad }));
     const sat = saturationOf(s.market, id);
-    const detailLine = `基準 ${fmt(p.basePrice)}${shiny ? ` × 色違い ${SHINY_MULT}` : ''} × 相場 ${sm.trend.toFixed(2)} × 値崩れ ${sat.toFixed(2)}`;
-    c.add(txt(this, 360, tagY + 76, detailLine, 18, { color: CSS.inkSoft, bold: false }));
-    // TODO(Phase 2): イベント係数・レリック補正の内訳表示
+    const evMult = eventMult(s, p.seriesId);
+    const detailLine = `基準 ${fmt(p.basePrice)}${shiny ? ` × 色違い ${SHINY_MULT}` : ''} × 相場 ${sm.trend.toFixed(2)}${evMult !== 1 ? ` × イベント ${evMult.toFixed(1)}` : ''} × 値崩れ ${sat.toFixed(2)}`;
+    c.add(txt(this, 360, tagY + 76, detailLine, 17, { color: CSS.inkSoft, bold: false, wrap: 400 }));
+    // TODO: 縁起物補正の内訳表示
 
     const total = estimateSellTotal(s, id, have);
     const by = tagY + 200;
+    if (isBanned(s, p.seriesId)) {
+      // 販売禁止：表では売れない。闇ルートなら半値で、摘発の危険あり
+      const dark = darkPrice(s, id);
+      const catchRate = Math.round(runHook(s, 'onDarkCatch', DARK_CATCH_RATE) * 100);
+      c.add(stamp(this, 360, tagY + 26, '販売禁止', 56, CSS.bad, { hold: Infinity, angle: -10, depth: 0 }));
+      const bd = new Button(this, 360, by, {
+        w: 480,
+        h: 108,
+        color: PAL.blood,
+        label: '闇ルートで1個売る',
+        sub: `+${fmt(dark)}（摘発 ${catchRate}%）`,
+        size: 30,
+        onPress: () => this.sellDarkOne(id),
+      });
+      const bc = new Button(this, 360, by + 130, { w: 260, h: 80, color: PAL.plum, label: '閉じる', size: 28, onPress: () => this.closeDetail() });
+      c.add([bd, bc]);
+      this.detail = c;
+      this.detailId = id;
+      return;
+    }
     const b1 = new Button(this, 210, by, {
       w: 270,
       h: 108,
@@ -363,6 +393,31 @@ export class MarketScene extends Phaser.Scene {
     this.detail?.destroy();
     this.detail = null;
     this.detailId = null;
+  }
+
+  private sellDarkOne(id: string) {
+    const s = S();
+    const r = sellDark(s, id);
+    save();
+    const ox = 360;
+    const oy = GAME_H / 2 + 20;
+    if (r.caught) {
+      sfx.play('buzz');
+      sfx.play('stamp');
+      this.cameras.main.shake(300, 0.01);
+      stamp(this, ox, oy - 60, '摘発！', 72, CSS.bad, { hold: 900, depth: 1000 });
+      floatText(this, ox, oy + 40, `罰金 -${fmt(r.fine)}`, CSS.bad, 40);
+    } else {
+      sfx.play('coin', { rate: 0.8 });
+      this.flyCoins(4, ox, oy);
+      floatText(this, ox, oy - 100, `+${fmt(r.earned)}（闇）`, CSS.gold, 40);
+    }
+    this.time.delayedCall(380, () => this.hud.refresh(true));
+    this.renderList();
+    this.time.delayedCall(0, () => {
+      if ((s.inventory[id] ?? 0) > 0 && this.detailId === id) this.openDetail(id, false);
+      else this.closeDetail();
+    });
   }
 
   private sell(id: string, n: number) {

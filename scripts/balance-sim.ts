@@ -8,7 +8,7 @@ import { pick, weightedPick } from '../src/core/util';
 import { MACHINE_BY_ID } from '../src/data/machines';
 import { parseStock, prizesOf, stockKey } from '../src/data/prizes';
 import { RARITIES, type Rarity } from '../src/data/rarity';
-import { sellOne, sellPrice } from '../src/game/market';
+import { canSell, sellOne, sellPrice } from '../src/game/market';
 import { paydayOffer, rollRelics, runHook } from '../src/game/relics';
 import { addRelic, advanceDay, jarCapacity, newGame, payDebt, pullCost, sellApCost, type GameState } from '../src/game/state';
 
@@ -96,6 +96,7 @@ function pullAll(s: GameState, reserve: number) {
 
 function sellWhere(s: GameState, pred: (key: string) => boolean) {
   for (const key of Object.keys(s.inventory)) {
+    if (!canSell(s, key)) continue; // 販売禁止中（闇ルートは使わない近似）
     while ((s.inventory[key] ?? 0) > 0 && pred(key)) {
       // 値崩れで基準の半分を切ったら、その日はやめる
       const { prize } = parseStock(key);
@@ -123,7 +124,7 @@ function playDay(s: GameState, st: Strategy): void {
     if (payday && s.coins < s.quota) {
       // 返済日：高く売れる順に、ノルマに届くまで売る
       const keys = Object.keys(s.inventory).sort((a, b) => sellPrice(s, b) - sellPrice(s, a));
-      for (const k of keys) while ((s.inventory[k] ?? 0) > 0 && s.coins < s.quota) sellOne(s, k);
+      for (const k of keys) if (canSell(s, k)) while ((s.inventory[k] ?? 0) > 0 && s.coins < s.quota) sellOne(s, k);
     }
     sellWhere(s, (k) => st.shouldSell(s, k, daysLeft));
   }

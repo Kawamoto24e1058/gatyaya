@@ -1,6 +1,7 @@
 // ゲーム状態と保存。Phase 1〜3 は localStorage（必ず try/catch）。
 import { BALANCE } from '../config';
 import { nextRarity, RARITY_INFO, type Rarity } from '../data/rarity';
+import { advanceEvents, initEvents, type EventState } from './events';
 import { advanceMarketDay, initMarket, migrateMarket, type MarketState } from './market';
 import { runHook } from './relics';
 
@@ -37,6 +38,7 @@ export type GameState = {
   jarBonusWeek: number;
   inventory: Record<string, number>;
   market: MarketState;
+  events: EventState;
   relics: string[];
   today: DayStats;
   totals: { pulls: number; sales: number; transforms: number; bestRarity: Rarity | null };
@@ -69,6 +71,7 @@ export function newGame(): GameState {
     jarBonusWeek: 0,
     inventory: {},
     market: initMarket(),
+    events: initEvents(),
     relics: [],
     today: freshDay(BALANCE.startCoins),
     totals: { pulls: 0, sales: 0, transforms: 0, bestRarity: null },
@@ -123,6 +126,7 @@ export function advanceDay(s: GameState): void {
   s.apMax = runHook(s, 'onDayStart', BALANCE.apPerDay);
   s.ap = s.apMax;
   advanceMarketDay(s.market, s.day);
+  advanceEvents(s);
   s.today = freshDay(s.coins);
   nightTransform(s);
   s.pendingMorning = true;
@@ -209,6 +213,7 @@ export function loadSave(): GameState | null {
     migrateMarket(s.market, s.day);
     // 合体廃止前のセーブを補う
     s.nightChanges ??= [];
+    s.events ??= initEvents();
     s.jarShiny ??= s.jar.map(() => false);
     s.today.shuffles ??= 0;
     s.today.fusions ??= 0;

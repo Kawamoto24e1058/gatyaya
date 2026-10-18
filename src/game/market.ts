@@ -3,6 +3,7 @@
 import { BALANCE } from '../config';
 import { parseStock, SERIES, SHINY_MULT } from '../data/prizes';
 import { clamp } from '../core/util';
+import { DARK_CATCH_RATE, DARK_FINE_RATE, DARK_PRICE_RATE, eventMult, isBanned } from './events';
 import { runHook } from './relics';
 import type { GameState } from './state';
 
@@ -147,7 +148,7 @@ export function saturationOf(m: MarketState, prizeId: string): number {
 function rawPrice(state: GameState, prizeId: string, satOverride?: number): number {
   const { prize: p, shiny } = parseStock(prizeId);
   const trend = state.market.series[p.seriesId].trend;
-  const event = 1; // TODO(Phase 2): イベント係数（TV紹介・生産終了・偽物・販売禁止）
+  const event = eventMult(state, p.seriesId);
   const sat = satOverride ?? saturationOf(state.market, prizeId);
   const v = p.basePrice * (shiny ? SHINY_MULT : 1) * trend * event * sat;
   return runHook(state, 'onSellPrice', v, { prizeId });
@@ -172,6 +173,8 @@ export function estimateSellTotal(state: GameState, prizeId: string, n: number):
 export function sellOne(state: GameState, prizeId: string): number {
   const have = state.inventory[prizeId] ?? 0;
   if (have <= 0) return 0;
+  // 販売禁止中は表では売れない（闇ルートは sellDark）
+  if (isBanned(state, parseStock(prizeId).prize.seriesId)) return 0;
   const price = sellPrice(state, prizeId);
   state.inventory[prizeId] = have - 1;
   if (state.inventory[prizeId] <= 0) delete state.inventory[prizeId];
@@ -195,4 +198,32 @@ export function trendSign(sm: SeriesMarket): TrendSign {
 export function trendIcon(sm: SeriesMarket): string {
   const arrow = { up: '↑', down: '↓', flat: '→' }[trendSign(sm)];
   return sm.mode === 'boom' ? `🔥${arrow}` : arrow;
+}
+
+export function canSell(state: GameState, key: string): boolean {
+  return !isBanned(state, parseStock(key).prize.seriesId);
+}
+
+export function darkPrice(state: GameState, key: string): number {
+  return Math.max(1, Math.round(rawPrice(state, key) * DARK_PRICE_RATE));
+}
+
+/** 闇ルートで 1 個売る。摘発されたら売上は没収、さらに罰金 */
+export function sellDark(state: GameState, key: string): { earned: number; caught: boolean; fine: number } {
+  const have = state.inventory[key] ?? 0;
+  if (have <= 0) return { earned: 0, caught: false, fine: 0 };
+  const price = darkPrice(state, key);
+  state.inventory[key] = have - 1;
+  if (state.inventory[key] <= 0) delete state.inventory[key];
+  state.market.saturation[key] = saturationOf(state.market, key) * BALANCE.saturationPerSale;
+  const catchRate = runHook(state, 'onDarkCatch', DARK_CATCH_RATE);
+  if (Math.random() < catchRate) {
+    const fine = Math.min(state.coins, price * DARK_FINE_RATE);
+    state.coins -= fine;
+    return { earned: 0, caught: true, fine };
+  }
+  state.coins += price;
+  state.today.sales += price;
+  state.totals.sales += price;
+  return { earned: price, caught: false, fine: 0 };
 }
