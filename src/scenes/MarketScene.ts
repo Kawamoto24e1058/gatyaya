@@ -260,8 +260,9 @@ export class MarketScene extends Phaser.Scene {
 
   // ---- 入力（リストはスクロールと区別するため指を離したときに選択） ----
 
-  private onDown(p: Phaser.Input.Pointer) {
-    if (this.detail || this.drag) return;
+  private onDown(p: Phaser.Input.Pointer, over: Phaser.GameObjects.GameObject[]) {
+    // ボタンなどを押したタップは一覧に通さない（「閉じる」が下の景品を開いてしまうのを防ぐ）
+    if (this.detail || this.drag || over.length > 0) return;
     if (p.worldY < this.area.top || p.worldY > this.area.bottom) return;
     this.drag = { id: p.id, startY: p.worldY, startScroll: this.scrollY, moved: false };
   }

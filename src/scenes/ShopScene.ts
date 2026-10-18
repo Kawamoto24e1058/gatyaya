@@ -73,7 +73,7 @@ export class ShopScene extends Phaser.Scene {
   private machineTop = 0;
   private lastShuffleAt = 0;
   private keys?: Phaser.Types.Input.Keyboard.CursorKeys;
-  private shelfKey = '';
+  private shelfKey: string | null = null;
   private clusterSince = new Map<Capsule, number>();
   private lastClusterCheck = 0;
   private btnShuffle!: Button;
@@ -90,7 +90,7 @@ export class ShopScene extends Phaser.Scene {
     this.clusterSince = new Map();
     this.lastClusterCheck = 0;
     this.relicShelf = undefined;
-    this.shelfKey = '';
+    this.shelfKey = null;
 
     // ---- レイアウト（縦長端末では余白を機械の上と瓶に配分） ----
     const top = Hud.bottom();
@@ -940,6 +940,21 @@ export class ShopScene extends Phaser.Scene {
       this.tweens.add({ targets: img, angle: { from: -3, to: 3 }, duration: 1800 + i * 130, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
       c.add([cord, img]);
     });
+    // 次に飾る場所に「？」の空き札。タップで入手方法を教える
+    if (ids.length < slots.length) {
+      const [x, y] = slots[ids.length];
+      const g = this.add.graphics();
+      g.lineStyle(3, PAL.paper, 0.45);
+      g.strokeRoundedRect(x - 26, y - 34, 52, 72, 10);
+      const q = txt(this, x, y + 2, '？', 32, { color: CSS.cream }).setAlpha(0.6);
+      const hit = this.add.zone(x, y, 64, 84).setInteractive({ useHandCursor: true });
+      hit.on('pointerdown', () => {
+        sfx.play('tap');
+        toast(this, '縁起物（レリック）の入手方法\n・返済日に取り立て屋の品から 1 つ選べる\n・ガチャからまれに出る「黒いカプセル」', this.jar.top + 90);
+      });
+      this.tweens.add({ targets: q, alpha: { from: 0.35, to: 0.75 }, duration: 1200, yoyo: true, repeat: -1 });
+      c.add([g, q, hit]);
+    }
     if (ids.length > slots.length) c.add(txt(this, 628, top + 450, `ほか${ids.length - slots.length}個`, 20, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 4 }));
     this.relicShelf = c;
   }
