@@ -16,9 +16,9 @@ export type Series = {
 };
 
 export const SERIES: Series[] = [
-  { id: 'mochi', name: 'もちもち惑星', color: '#ff8fb1' },
-  { id: 'neji', name: 'ネジネジ工房', color: '#5ec8ff' },
-  { id: 'obake', name: 'おばけ商店街', color: '#a98cff' },
+  { id: 'mochi', name: 'もちもち惑星', color: '#e8879c' },
+  { id: 'neji', name: 'ネジネジ工房', color: '#5f9fae' },
+  { id: 'obake', name: 'おばけ商店街', color: '#8f78c0' },
 ];
 
 // シリーズ × レア度ごとに 2 種

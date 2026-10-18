@@ -1,19 +1,52 @@
 // 相場で売る（出店）。入場で 1AP 消費済み。出店中は何個でも売れ、店に戻ると店じまい。
 // TODO(仕様確認): 「出店」を 1 日 1 回とみなすか、入るたびに 1AP かは未確定。現状は入るたびに 1AP。
+// 見た目：トレカ屋のショーケース＋黒板の相場ボード。数値は景品をタップしたときだけ出す。
 import Phaser from 'phaser';
-import { CSS, GAME_W } from '../config';
+import { BOTTOM, CSS, GAME_H, GAME_W, PAL } from '../config';
 import { sfx } from '../core/audio';
 import { fmt } from '../core/util';
-import { PRIZE_BY_ID, SERIES, SERIES_BY_ID } from '../data/prizes';
+import { PRIZE_BY_ID, SERIES } from '../data/prizes';
 import { RARITY_INFO } from '../data/rarity';
-import { estimateSellTotal, saturationOf, sellOne, sellPrice, trendIcon, trendSign } from '../game/market';
+import { estimateSellTotal, saturationOf, sellOne, sellPrice, trendSign, type SeriesMarket } from '../game/market';
 import { S, save } from '../game/state';
 import { Hud } from '../ui/Hud';
-import { Button, panel, txt } from '../ui/widgets';
+import { CARD_H, CARD_W, makePrizeCard, shine } from '../ui/PrizeCard';
+import { Button, drawPlate, floatText, txt } from '../ui/widgets';
 
-const LIST = { top: 420, bottom: 1110, colW: 216, rowH: 118, x0: 24 };
+const COLS = 3;
+const CARD_SCALE = 0.62;
+const GAP = 14;
 
-const MODE_LABEL = { normal: '', boom: 'ブーム', bored: '飽き気味' } as const;
+/** 黒板に描くチョーク風の矢印・炎 */
+function drawTrendMark(g: Phaser.GameObjects.Graphics, x: number, y: number, sm: SeriesMarket) {
+  const sign = trendSign(sm);
+  const col = sign === 'up' ? 0x9be0a4 : sign === 'down' ? 0xf2a0b4 : 0xd8d4cc;
+  g.lineStyle(8, col, 1);
+  g.beginPath();
+  if (sign === 'flat') {
+    g.moveTo(x - 22, y);
+    g.lineTo(x + 18, y);
+    g.strokePath();
+    g.fillStyle(col, 1);
+    g.fillTriangle(x + 14, y - 12, x + 30, y, x + 14, y + 12);
+  } else {
+    const d = sign === 'up' ? -1 : 1;
+    g.moveTo(x - 20, y - d * 16);
+    g.lineTo(x + 14, y + d * 12);
+    g.strokePath();
+    g.fillStyle(col, 1);
+    g.fillTriangle(x + 4, y + d * 22, x + 26, y + d * 22, x + 22, y + d * -2);
+  }
+  if (sm.mode === 'boom') {
+    // 炎
+    const fx = x - 66;
+    g.fillStyle(0xf08a4b, 1);
+    g.fillTriangle(fx - 14, y + 16, fx + 14, y + 16, fx, y - 22);
+    g.fillCircle(fx, y + 8, 14);
+    g.fillStyle(0xf6d58a, 1);
+    g.fillCircle(fx, y + 10, 7);
+  }
+}
 
 export class MarketScene extends Phaser.Scene {
   private hud!: Hud;
@@ -23,6 +56,7 @@ export class MarketScene extends Phaser.Scene {
   private drag: { id: number; startY: number; startScroll: number; moved: boolean } | null = null;
   private detail: Phaser.GameObjects.Container | null = null;
   private detailId: string | null = null;
+  private area = { top: 0, bottom: 0, x0: 0, cellW: 0, cellH: 0 };
 
   constructor() {
     super('Market');
@@ -34,33 +68,34 @@ export class MarketScene extends Phaser.Scene {
     this.drag = null;
     this.scrollY = 0;
 
-    const bg = this.add.graphics();
-    bg.fillStyle(0x2d2148, 1);
-    bg.fillRect(0, 0, GAME_W, 1280);
-    // 屋台の日よけ
-    for (let i = 0; i < 18; i++) {
-      bg.fillStyle(i % 2 ? 0xfff6e6 : 0xff5a7a, 1);
-      bg.fillRect(i * 40, 118, 40, 22);
-      bg.fillCircle(i * 40 + 20, 140, 20);
-    }
-
+    this.add.image(0, 0, 'bg_plum').setOrigin(0);
     this.hud = new Hud(this);
-    this.buildSeriesBoard();
+    const top = Hud.bottom();
 
-    txt(this, 26, 396, '在庫（タップで値段を見る）', 22, { originX: 0, color: CSS.sub, bold: false });
-    this.list = this.add.container(0, LIST.top);
-    const maskG = this.make.graphics({}, false);
-    maskG.fillStyle(0xffffff);
-    maskG.fillRect(0, LIST.top, GAME_W, LIST.bottom - LIST.top);
-    this.list.setMask(maskG.createGeometryMask());
-    this.renderList();
+    // のれん風の日よけ
+    const awn = this.add.graphics().setDepth(10);
+    for (let i = 0; i < 9; i++) {
+      awn.fillStyle(i % 2 ? PAL.paper : PAL.vermilion, 1);
+      awn.fillRect(i * 80, top, 80, 26);
+      awn.fillCircle(i * 80 + 40, top + 26, 40 / 2);
+    }
+    awn.fillStyle(PAL.ink, 1);
+    awn.fillRect(0, top, GAME_W, 5);
 
-    new Button(this, 360, 1196, {
-      w: 420,
-      h: 108,
-      color: 0xff5a7a,
+    const boardBottom = this.buildBoard(top + 60);
+
+    const btnY = BOTTOM - 70;
+    const caseTop = boardBottom + 36;
+    const caseBottom = btnY - 80;
+    this.buildCase(caseTop, caseBottom);
+
+    new Button(this, 360, btnY, {
+      w: 440,
+      h: 104,
+      color: PAL.vermilion,
+      icon: 'ic_close',
       label: '店じまいして戻る',
-      size: 32,
+      size: 30,
       onPress: () => this.leave(),
     });
 
@@ -69,23 +104,60 @@ export class MarketScene extends Phaser.Scene {
     this.input.on('pointerup', this.onUp, this);
   }
 
-  private buildSeriesBoard() {
+  /** 黒板の相場ボード。戻り値は下端 */
+  private buildBoard(y: number): number {
     const s = S();
-    panel(this, 360, 272, 680, 220, 0x1b1430, 20);
+    const h = 52 + SERIES.length * 66;
+    const g = this.add.graphics();
+    drawPlate(g, 30, y, 660, h, PAL.wood, { radius: 14, shadow: 7, outline: 5, shine: false });
+    g.fillStyle(0x2f4a3a, 1);
+    g.fillRoundedRect(44, y + 14, 632, h - 28, 8);
+    // チョークの擦れ
+    g.fillStyle(0xffffff, 0.05);
+    for (let i = 0; i < 6; i++) g.fillEllipse(120 + i * 100, y + 30 + (i % 3) * 40, 140, 26);
+    txt(this, 64, y + 40, '今日の相場', 26, { originX: 0, color: '#e8e4d6' });
+    txt(this, 656, y + 40, 'タップで値段', 18, { originX: 1, color: '#b9c8b8', bold: false });
+    const marks = this.add.graphics();
     SERIES.forEach((se, i) => {
-      const y = 196 + i * 68;
+      const ry = y + 92 + i * 66;
       const sm = s.market.series[se.id];
       const col = Phaser.Display.Color.HexStringToColor(se.color).color;
-      const g = this.add.graphics();
-      g.fillStyle(col, 1);
-      g.fillRoundedRect(46, y - 20, 16, 40, 6);
-      txt(this, 80, y, se.name, 30, { originX: 0 });
-      const sign = trendSign(sm);
-      const color = sm.mode === 'boom' ? CSS.gold : sign === 'up' ? CSS.good : sign === 'down' ? CSS.bad : CSS.sub;
-      const icon = txt(this, 630, y, trendIcon(sm), 44, { originX: 1, color });
-      if (MODE_LABEL[sm.mode]) txt(this, 530, y, MODE_LABEL[sm.mode], 22, { originX: 1, color, bold: false });
-      if (sm.mode === 'boom') this.tweens.add({ targets: icon, scale: 1.15, duration: 380, yoyo: true, repeat: -1 });
+      g.fillStyle(col, 0.9);
+      g.fillRoundedRect(66, ry - 18, 14, 36, 4);
+      txt(this, 96, ry, se.name, 30, { originX: 0, color: '#f2efe4' });
+      const label = sm.mode === 'boom' ? 'ブーム' : sm.mode === 'bored' ? '飽き気味' : '';
+      if (label) txt(this, 520, ry, label, 22, { originX: 1, color: sm.mode === 'boom' ? '#f6c48a' : '#c9c4d6' });
+      drawTrendMark(marks, 610, ry, sm);
     });
+    return y + h;
+  }
+
+  /** ガラスのショーケース */
+  private buildCase(top: number, bottom: number) {
+    const g = this.add.graphics();
+    drawPlate(g, 22, top, 676, bottom - top, PAL.woodDark, { radius: 18, shadow: 8, outline: 5, shine: false });
+    g.fillStyle(0x1a1020, 1);
+    g.fillRoundedRect(36, top + 14, 648, bottom - top - 28, 10);
+    // 棚板
+    const cellW = CARD_W * CARD_SCALE;
+    const cellH = CARD_H * CARD_SCALE + 26;
+    const x0 = (GAME_W - (COLS * cellW + (COLS - 1) * GAP)) / 2;
+    this.area = { top: top + 20, bottom: bottom - 20, x0, cellW, cellH };
+    txt(this, 360, top - 2, '在庫', 24, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 5 }).setDepth(5);
+
+    this.list = this.add.container(0, this.area.top);
+    const maskG = this.make.graphics({}, false);
+    maskG.fillStyle(0xffffff);
+    maskG.fillRect(36, this.area.top, 648, this.area.bottom - this.area.top);
+    this.list.setMask(maskG.createGeometryMask());
+
+    // ガラスの反射（手前）
+    const glass = this.add.graphics().setDepth(20);
+    glass.fillStyle(0xffffff, 0.06);
+    glass.fillTriangle(36, top + 14, 260, top + 14, 36, top + 260);
+    glass.fillStyle(0xffffff, 0.05);
+    glass.fillRect(560, top + 14, 18, bottom - top - 28);
+    this.renderList();
   }
 
   private sortedIds(): string[] {
@@ -103,55 +175,57 @@ export class MarketScene extends Phaser.Scene {
     this.list.removeAll(true);
     this.ids = this.sortedIds();
     const s = S();
+    const A = this.area;
     if (this.ids.length === 0) {
-      this.list.add(txt(this, 360, 200, '売れる景品がありません', 28, { color: CSS.sub }));
+      this.list.add(txt(this, 360, 120, 'ショーケースは空っぽ…', 28, { color: CSS.sub }));
     }
     this.ids.forEach((id, i) => {
       const p = PRIZE_BY_ID[id];
-      const se = SERIES_BY_ID[p.seriesId];
-      const info = RARITY_INFO[p.rarity];
-      const x = LIST.x0 + (i % 3) * (LIST.colW + 12);
-      const y = Math.floor(i / 3) * LIST.rowH;
-      const g = this.add.graphics();
-      g.fillStyle(0xfff6e6, 1);
-      g.fillRoundedRect(x, y, LIST.colW, LIST.rowH - 12, 16);
-      g.fillStyle(Phaser.Display.Color.HexStringToColor(se.color).color, 1);
-      g.fillRoundedRect(x, y, 14, LIST.rowH - 12, { tl: 16, bl: 16, tr: 0, br: 0 });
-      g.lineStyle(4, info.color, 1);
-      g.strokeRoundedRect(x, y, LIST.colW, LIST.rowH - 12, 16);
-      const rb = txt(this, x + 26, y + 22, p.rarity, 22, { originX: 0, color: info.css, stroke: '#2a1f45', strokeThickness: 4 });
+      const col = i % COLS;
+      const row = Math.floor(i / COLS);
+      const cx = A.x0 + col * (A.cellW + GAP) + A.cellW / 2;
+      const cy = row * A.cellH + (CARD_H * CARD_SCALE) / 2 + 8;
+      // 棚板
+      if (col === 0) {
+        const shelf = this.add.graphics();
+        shelf.fillStyle(PAL.wood, 1);
+        shelf.fillRect(36, cy + (CARD_H * CARD_SCALE) / 2 + 2, 648, 10);
+        shelf.fillStyle(PAL.ink, 1);
+        shelf.fillRect(36, cy + (CARD_H * CARD_SCALE) / 2 + 12, 648, 3);
+        this.list.add(shelf);
+      }
+      const card = makePrizeCard(this, p, { count: s.inventory[id] });
+      card.setPosition(cx, cy).setScale(CARD_SCALE).setAngle(((i * 37) % 5) - 2);
+      this.list.add(card);
+      // 値動きの小札（シリーズ単位の矢印）
       const sm = s.market.series[p.seriesId];
-      const arrow = txt(this, x + LIST.colW - 12, y + 22, trendIcon(sm), 22, {
-        originX: 1,
-        color: sm.mode === 'boom' ? '#e08a00' : trendSign(sm) === 'up' ? '#1f9e5a' : trendSign(sm) === 'down' ? '#d63a3a' : '#8a80a6',
-      });
-      const name = txt(this, x + 26, y + 62, p.name, p.name.length > 7 ? 19 : 23, {
-        originX: 0,
-        color: CSS.ink,
-        align: 'left',
-        wrap: LIST.colW - 70,
-      });
-      const cnt = txt(this, x + LIST.colW - 12, y + 80, `×${s.inventory[id]}`, 26, { originX: 1, color: CSS.ink });
-      this.list.add([g, rb, arrow, name, cnt]);
+      const sign = trendSign(sm);
+      const mark = sm.mode === 'boom' ? '🔥' : sign === 'up' ? '↑' : sign === 'down' ? '↓' : '→';
+      const tagColor = sm.mode === 'boom' ? PAL.mustard : sign === 'up' ? PAL.moss : sign === 'down' ? PAL.vermilion : 0x8a7f9a;
+      const tg = this.add.graphics();
+      const ty = cy + (CARD_H * CARD_SCALE) / 2 - 34;
+      drawPlate(tg, cx - A.cellW / 2 - 4, ty, 46, 38, tagColor, { radius: 8, shadow: 3, outline: 3, shine: false });
+      this.list.add(tg);
+      this.list.add(txt(this, cx - A.cellW / 2 + 19, ty + 19, mark, 24, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 4 }));
     });
     this.clampScroll();
   }
 
   private maxScroll() {
-    const rows = Math.ceil(this.ids.length / 3);
-    return Math.max(0, rows * LIST.rowH - (LIST.bottom - LIST.top));
+    const rows = Math.ceil(this.ids.length / COLS);
+    return Math.max(0, rows * this.area.cellH + 20 - (this.area.bottom - this.area.top));
   }
 
   private clampScroll() {
     this.scrollY = Phaser.Math.Clamp(this.scrollY, 0, this.maxScroll());
-    this.list.y = LIST.top - this.scrollY;
+    this.list.y = this.area.top - this.scrollY;
   }
 
   // ---- 入力（リストはスクロールと区別するため指を離したときに選択） ----
 
   private onDown(p: Phaser.Input.Pointer) {
     if (this.detail || this.drag) return;
-    if (p.worldY < LIST.top || p.worldY > LIST.bottom) return;
+    if (p.worldY < this.area.top || p.worldY > this.area.bottom) return;
     this.drag = { id: p.id, startY: p.worldY, startScroll: this.scrollY, moved: false };
   }
 
@@ -170,26 +244,25 @@ export class MarketScene extends Phaser.Scene {
     const moved = this.drag.moved;
     this.drag = null;
     if (moved) return;
-    const lx = p.worldX - LIST.x0;
-    const ly = p.worldY - LIST.top + this.scrollY;
-    const col = Math.floor(lx / (LIST.colW + 12));
-    const row = Math.floor(ly / LIST.rowH);
-    if (col < 0 || col > 2 || lx - col * (LIST.colW + 12) > LIST.colW) return;
-    const id = this.ids[row * 3 + col];
+    const A = this.area;
+    const lx = p.worldX - A.x0;
+    const ly = p.worldY - A.top + this.scrollY;
+    const col = Math.floor(lx / (A.cellW + GAP));
+    const row = Math.floor(ly / A.cellH);
+    if (col < 0 || col >= COLS || lx - col * (A.cellW + GAP) > A.cellW) return;
+    const id = this.ids[row * COLS + col];
     if (id) {
-      sfx.play('tap');
+      sfx.play('flip', { rate: 1.3, vol: 0.6 });
       this.openDetail(id);
     }
   }
 
   // ---- 詳細パネル（数値はここでだけ出す） ----
 
-  private openDetail(id: string) {
+  private openDetail(id: string, animate = true) {
     this.detail?.destroy();
     const s = S();
     const p = PRIZE_BY_ID[id];
-    const se = SERIES_BY_ID[p.seriesId];
-    const info = RARITY_INFO[p.rarity];
     const sm = s.market.series[p.seriesId];
     const have = s.inventory[id] ?? 0;
     if (have <= 0) {
@@ -198,51 +271,62 @@ export class MarketScene extends Phaser.Scene {
     }
 
     const c = this.add.container(0, 0).setDepth(700);
-    const shade = this.add.rectangle(360, 640, GAME_W, 1280, 0x000000, 0.55).setInteractive();
+    const shade = this.add.rectangle(GAME_W / 2, GAME_H / 2, GAME_W, GAME_H, PAL.ink, 0.75).setInteractive();
     shade.on('pointerdown', () => this.closeDetail());
     c.add(shade);
-    const pg = panel(this, 360, 700, 620, 640);
-    c.add(pg);
-    const band = this.add.graphics();
-    band.fillStyle(Phaser.Display.Color.HexStringToColor(se.color).color, 1);
-    band.fillRoundedRect(50, 380, 620, 64, { tl: 24, tr: 24, bl: 0, br: 0 });
-    c.add(band);
-    c.add(txt(this, 80, 412, se.name, 26, { originX: 0, stroke: '#2a1f45', strokeThickness: 5 }));
-    c.add(txt(this, 640, 412, p.rarity, 30, { originX: 1, color: info.css, stroke: '#2a1f45', strokeThickness: 6 }));
-    c.add(txt(this, 360, 490, p.name, 38, { color: CSS.ink, wrap: 560 }));
-    c.add(txt(this, 360, 540, `所持 ×${have}`, 24, { color: '#6b5f8a', bold: false }));
 
+    const midY = GAME_H / 2;
+    // 大きなカード
+    const card = makePrizeCard(this, p, { count: have });
+    card.setPosition(360, midY - 260).setScale(0.95);
+    c.add(card);
+
+    // 値札（紐でぶら下がる紙）
+    const tagY = midY + 20;
+    const tg = this.add.graphics();
+    tg.lineStyle(4, PAL.ink, 1);
+    tg.lineBetween(360, tagY - 120, 360, tagY - 70);
+    drawPlate(tg, 150, tagY - 70, 420, 170, PAL.paper, { radius: 14, shadow: 7, outline: 5, shine: false });
+    tg.fillStyle(PAL.ink, 1);
+    tg.fillCircle(360, tagY - 54, 7);
+    c.add(tg);
     const price = sellPrice(s, id);
-    c.add(txt(this, 360, 600, '1個の売値', 22, { color: '#6b5f8a', bold: false }));
-    c.add(txt(this, 360, 646, fmt(price), 60, { color: '#d18a00' }));
+    c.add(txt(this, 360, tagY - 22, '1個の売値', 22, { color: CSS.inkSoft }));
+    c.add(txt(this, 360, tagY + 26, fmt(price), 64, { color: CSS.bad }));
     const sat = saturationOf(s.market, id);
-    const detailLine = `基準 ${fmt(p.basePrice)}  ・  相場 ×${sm.trend.toFixed(2)} ${trendIcon(sm)}  ・  値崩れ ×${sat.toFixed(2)}`;
-    c.add(txt(this, 360, 704, detailLine, 20, { color: '#6b5f8a', bold: false }));
+    const detailLine = `基準 ${fmt(p.basePrice)} × 相場 ${sm.trend.toFixed(2)} × 値崩れ ${sat.toFixed(2)}`;
+    c.add(txt(this, 360, tagY + 76, detailLine, 18, { color: CSS.inkSoft, bold: false }));
     // TODO(Phase 2): イベント係数・レリック補正の内訳表示
 
     const total = estimateSellTotal(s, id, have);
-    const b1 = new Button(this, 210, 800, {
-      w: 260,
-      h: 104,
-      color: 0x4fd18b,
+    const by = tagY + 200;
+    const b1 = new Button(this, 210, by, {
+      w: 270,
+      h: 108,
+      color: PAL.moss,
       label: '1個売る',
       sub: `+${fmt(price)}`,
       size: 30,
       onPress: () => this.sell(id, 1),
     });
-    const b2 = new Button(this, 510, 800, {
-      w: 260,
-      h: 104,
-      color: 0xffa531,
-      label: `全部売る`,
+    const b2 = new Button(this, 510, by, {
+      w: 270,
+      h: 108,
+      color: PAL.mustard,
+      label: '全部売る',
       sub: `×${have} → +${fmt(total)}`,
       size: 30,
       onPress: () => this.sell(id, have),
     });
-    const b3 = new Button(this, 360, 930, { w: 300, h: 80, color: 0x8a80a6, label: '閉じる', size: 28, onPress: () => this.closeDetail() });
+    const b3 = new Button(this, 360, by + 130, { w: 260, h: 80, color: PAL.plum, label: '閉じる', size: 28, onPress: () => this.closeDetail() });
     c.add([b1, b2, b3]);
-    c.setScale(0.96).setAlpha(0);
-    this.tweens.add({ targets: c, scale: 1, alpha: 1, duration: 120, ease: 'Back.easeOut' });
+    if (animate) {
+      card.setScale(0.2).setAngle(-30);
+      this.tweens.add({ targets: card, scale: 0.95, angle: 0, duration: 260, ease: 'Back.easeOut' });
+      c.setAlpha(0);
+      this.tweens.add({ targets: c, alpha: 1, duration: 140 });
+    }
+    if (RARITY_INFO[p.rarity].index >= 2) this.time.delayedCall(280, () => card.active && shine(this, card));
     this.detail = c;
     this.detailId = id;
   }
@@ -261,12 +345,16 @@ export class MarketScene extends Phaser.Scene {
     save();
     sfx.play('coin', { rate: n > 1 ? 1.05 : 1 });
     if (n > 3) sfx.play('coin', { delay: 0.09, rate: 1.12, vol: 0.7 });
-    this.flyCoins(Math.min(12, 3 + n), 360, 800);
+    sfx.play('stamp', { vol: 0.5, delay: 0.05 });
+    const ox = 360;
+    const oy = GAME_H / 2 + 20;
+    this.flyCoins(Math.min(14, 3 + n), ox, oy);
+    floatText(this, ox, oy - 100, `+${fmt(earned)}`, CSS.gold, 46);
     this.time.delayedCall(380, () => this.hud.refresh(true));
     this.renderList();
     // 押したボタン自身を破棄するので、入力処理が終わってから作り直す
     this.time.delayedCall(0, () => {
-      if ((s.inventory[id] ?? 0) > 0 && this.detailId === id) this.openDetail(id);
+      if ((s.inventory[id] ?? 0) > 0 && this.detailId === id) this.openDetail(id, false);
       else this.closeDetail();
     });
   }
@@ -274,14 +362,14 @@ export class MarketScene extends Phaser.Scene {
   private flyCoins(n: number, x: number, y: number) {
     const t = this.hud.coinTarget();
     for (let i = 0; i < n; i++) {
-      const c = this.add.image(x + Phaser.Math.Between(-60, 60), y + Phaser.Math.Between(-30, 30), 'coin').setDepth(900);
+      const c = this.add.image(x + Phaser.Math.Between(-70, 70), y + Phaser.Math.Between(-30, 30), 'coin').setDepth(900);
       this.tweens.add({
         targets: c,
         x: t.x,
         y: t.y,
         scale: 0.6,
         delay: i * 35,
-        duration: 380,
+        duration: 420,
         ease: 'Cubic.easeIn',
         onComplete: () => {
           c.destroy();

@@ -26,7 +26,7 @@ export const MACHINES: GachaMachineDef[] = [
     capsulesPerPull: 1,
     rarityWeights: { N: 72, R: 20, SR: 6, SSR: 1.7, UR: 0.3 },
     seriesWeights: { mochi: 1, neji: 1, obake: 1 },
-    bodyColor: 0xff5a7a,
+    bodyColor: 0xd94b3d,
   },
   // TODO(Phase 2): レバー式（下へ強く引く / 3 個 / 重い「ガシャン」）
   // TODO(Phase 3): 10連タワー（長押しで溜めて離す）、巨大ガチャ（2 本指で回す・カプセル in カプセル）

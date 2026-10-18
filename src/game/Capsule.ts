@@ -31,7 +31,6 @@ export class Capsule extends Phaser.Physics.Matter.Image {
       this.glow = scene.add
         .image(x, y, 'glow')
         .setTint(RARITY_INFO[rarity].color)
-        .setBlendMode(Phaser.BlendModes.ADD)
         .setScale((r * 3.2) / 128)
         .setDepth(199)
         .setAlpha(0.6);

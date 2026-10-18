@@ -17,7 +17,11 @@ export type SfxName =
   | 'fail'
   | 'whoosh'
   | 'knock'
-  | 'charge';
+  | 'charge'
+  | 'shutter'
+  | 'stamp'
+  | 'flip'
+  | 'rumble';
 
 type PlayOpts = { rate?: number; vol?: number; delay?: number };
 
@@ -296,6 +300,72 @@ const builders: Record<SfxName, () => Float32Array[]> = {
   charge: () => [
     normalize(synth(0.05, (t) => Math.sin(TAU * 1100 * t) * Math.exp(-t * 70) + Math.sin(TAU * 2200 * t) * Math.exp(-t * 120) * 0.3), 0.5),
   ],
+
+  // シャッターが下りる「ガラガラガラ…ガシャン」
+  shutter: () => {
+    let y = 0;
+    return [
+      normalize(
+        synth(1.1, (t) => {
+          let s = 0;
+          if (t < 0.85) {
+            const rattle = Math.max(0, Math.sin(Math.PI * 2 * 26 * t)) ** 6;
+            const a = 1 - Math.exp((-TAU * 900) / SR);
+            y += a * (rnd() - y);
+            s += y * (0.35 + rattle * 1.4) * Math.min(1, t / 0.05);
+          }
+          const t2 = t - 0.85;
+          if (t2 > 0) s += (rnd() * Math.exp(-t2 * 30) + Math.sin(TAU * 90 * t2) * Math.exp(-t2 * 12)) * 1.2;
+          return s;
+        }),
+        0.8,
+      ),
+    ];
+  },
+
+  // ハンコ「ドン」
+  stamp: () => [
+    normalize(
+      lowpass(
+        synth(0.3, (t) => Math.sin(TAU * (70 + 60 * Math.exp(-t * 30)) * t) * Math.exp(-t * 14) + rnd() * Math.exp(-t * 60) * 0.6),
+        1500,
+      ),
+    ),
+  ],
+
+  // カードをめくる「シュパッ」
+  flip: () => {
+    let y = 0;
+    return [
+      normalize(
+        synth(0.16, (t) => {
+          const fc = 1500 + 5000 * (t / 0.16);
+          const a = 1 - Math.exp((-TAU * fc) / SR);
+          y += a * (rnd() - y);
+          return y * Math.sin(Math.PI * Math.min(1, t / 0.16)) + (t > 0.12 ? rnd() * Math.exp(-(t - 0.12) * 200) * 0.5 : 0);
+        }),
+        0.5,
+      ),
+    ];
+  },
+
+  // 取り立て屋の低いうなり
+  rumble: () => {
+    let ph = 0;
+    return [
+      normalize(
+        lowpass(
+          synth(1.6, (t) => {
+            ph += (TAU * (48 + 6 * Math.sin(TAU * 0.7 * t))) / SR;
+            const env = Math.min(1, t / 0.3) * (t > 1.2 ? Math.exp(-(t - 1.2) * 8) : 1);
+            return (Math.sin(ph) + 0.5 * Math.sin(ph * 2.01) + rnd() * 0.15) * env;
+          }),
+          600,
+        ),
+        0.8,
+      ),
+    ];
+  },
 };
 
 let lpState = 0;
