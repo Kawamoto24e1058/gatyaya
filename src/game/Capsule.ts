@@ -43,6 +43,9 @@ export class Capsule extends Phaser.Physics.Matter.Image {
   }
 
   destroy(fromScene?: boolean) {
+    // 出現・合体時の拡大アニメが残ったまま消えると、物理ボディ消滅後に scale が更新されて落ちる
+    this.scene?.tweens.killTweensOf(this);
+    if (this.glow) this.scene?.tweens.killTweensOf(this.glow);
     this.glow?.destroy();
     this.glow = undefined;
     super.destroy(fromScene);

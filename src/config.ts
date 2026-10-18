@@ -56,7 +56,7 @@ export const BALANCE = {
   saturationPerSale: 0.92,
   saturationRecovery: 0.5,
   trendMin: 0.3,
-  trendMax: 5.0,
+  trendMax: 6.0,
 } as const;
 
 /**

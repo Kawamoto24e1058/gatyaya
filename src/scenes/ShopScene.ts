@@ -4,7 +4,7 @@ import { BALANCE, BOTTOM, CSS, EXTRA_H, GAME_H, GAME_W, PAL } from '../config';
 import { sfx } from '../core/audio';
 import { pick, vibrate, weightedPick } from '../core/util';
 import { MACHINE_BY_ID, type GachaMachineDef } from '../data/machines';
-import { prizesOf, type Prize } from '../data/prizes';
+import { prizesOf, SERIES, type Prize } from '../data/prizes';
 import { nextRarity, RARITY_INFO, type Rarity } from '../data/rarity';
 import { Capsule } from '../game/Capsule';
 import { runHook } from '../game/relics';
@@ -643,7 +643,14 @@ export class ShopScene extends Phaser.Scene {
     g.lineStyle(5, PAL.ink, 1);
     g.strokeRoundedRect(-330, -126, 660, 26, 10);
     const t1 = txt(this, 0, -24, `${s.day}日目`, 76, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 10, shadow: true });
-    const t2 = txt(this, 0, 58, payday ? `今日は返済日！ 閉店後に ${s.quota.toLocaleString('ja-JP')} 返済` : `第${s.week}週 ・ 返済まで あと${daysUntilPayday(s)}日`, 26, {
+    // 高騰中のシリーズがあれば朝いちばんに知らせる
+    const hot = SERIES.filter((se) => s.market.series[se.id].trend >= 1.8).map((se) => se.name);
+    const sub = payday
+      ? `今日は返済日！ 閉店後に ${s.quota.toLocaleString('ja-JP')} 返済`
+      : hot.length > 0
+        ? `🔥 ${hot.join('・')} が高騰中！`
+        : `第${s.week}週 ・ 返済まで あと${daysUntilPayday(s)}日`;
+    const t2 = txt(this, 0, 58, sub, 26, {
       color: payday ? '#ffd9cf' : CSS.cream,
       stroke: CSS.ink,
       strokeThickness: 5,

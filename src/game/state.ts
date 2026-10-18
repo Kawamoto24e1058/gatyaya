@@ -1,7 +1,7 @@
 // ゲーム状態と保存。Phase 1〜3 は localStorage（必ず try/catch）。
 import { BALANCE } from '../config';
 import type { Rarity } from '../data/rarity';
-import { advanceMarketDay, initMarket, type MarketState } from './market';
+import { advanceMarketDay, initMarket, migrateMarket, type MarketState } from './market';
 import { runHook } from './relics';
 
 export type DayStats = {
@@ -101,7 +101,7 @@ export function advanceDay(s: GameState): void {
   s.day += 1;
   s.apMax = runHook(s, 'onDayStart', BALANCE.apPerDay);
   s.ap = s.apMax;
-  advanceMarketDay(s.market);
+  advanceMarketDay(s.market, s.day);
   s.today = freshDay(s.coins);
   s.pendingMorning = true;
   // TODO(Phase 2): 噂（掲示板）・イベントの抽選
@@ -155,6 +155,7 @@ export function loadSave(): GameState | null {
     if (!raw) return null;
     const s = JSON.parse(raw) as GameState;
     if (s.version !== 1) return null;
+    migrateMarket(s.market, s.day);
     return s;
   } catch {
     return null;

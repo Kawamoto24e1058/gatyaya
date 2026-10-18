@@ -2,17 +2,31 @@
 // 売値 = basePrice × トレンド係数 × イベント係数 × 飽和係数 × レリック補正
 import { BALANCE } from '../config';
 import { PRIZE_BY_ID, SERIES } from '../data/prizes';
-import { clamp, gauss } from '../core/util';
+import { clamp } from '../core/util';
 import { runHook } from './relics';
 import type { GameState } from './state';
 
 export type TrendMode = 'normal' | 'boom' | 'bored';
 
+/**
+ * 週ごとの値動きパターン（プレイヤーには非公開。Phase 2 の噂でヒントを出す想定）。
+ * - wave   : 大波。じわじわ下がったあと、ある日 ×2〜×6 に跳ね上がり、すぐ暴落する
+ * - ripple : 小波。下がってから ×1.4〜×2.5 程度まで上がる
+ * - slump  : じり貧。週を通して下がり続ける
+ * - chaos  : 乱高下。毎日 ×0.6〜×1.5 で上下する
+ */
+export type WeekPattern = 'wave' | 'ripple' | 'slump' | 'chaos';
+
 export type SeriesMarket = {
   trend: number;
   prevTrend: number;
+  /** 表示用（trend から決まる） */
   mode: TrendMode;
-  modeDays: number;
+  pattern: WeekPattern;
+  /** その週 7 日分の倍率 */
+  curve: number[];
+  /** 今日が週の何日目か（0 始まり） */
+  dayIdx: number;
 };
 
 export type MarketState = {
@@ -21,46 +35,101 @@ export type MarketState = {
   saturation: Record<string, number>;
 };
 
+const rand = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
+const randInt = (lo: number, hi: number) => Math.floor(rand(lo, hi + 1));
+
+// TODO(balance): パターンの出現率と倍率は仮値
+const PATTERN_WEIGHTS: Record<WeekPattern, number> = { wave: 0.22, ripple: 0.28, slump: 0.18, chaos: 0.32 };
+
+function pickPattern(): WeekPattern {
+  let r = Math.random();
+  for (const [k, w] of Object.entries(PATTERN_WEIGHTS) as [WeekPattern, number][]) {
+    r -= w;
+    if (r <= 0) return k;
+  }
+  return 'chaos';
+}
+
+/** じわじわ下がる区間 */
+function decline(start: number, days: number, out: number[]) {
+  let v = start;
+  for (let i = 0; i < days; i++) {
+    out.push(v);
+    v -= rand(0.03, 0.08);
+  }
+}
+
+export function makeCurve(p: WeekPattern): number[] {
+  const c: number[] = [];
+  switch (p) {
+    case 'wave': {
+      // 跳ね上がり開始日。ピークは開始の 2 日後（週内に収まるように）
+      const s = randInt(1, 4);
+      decline(rand(0.85, 0.95), s, c);
+      c.push(rand(0.9, 1.4), rand(1.4, 2.0), rand(2.0, 6.0), rand(1.4, 2.0), rand(0.9, 1.4));
+      while (c.length < 7) c.push(rand(0.4, 0.9));
+      break;
+    }
+    case 'ripple': {
+      const s = randInt(1, 3);
+      decline(rand(0.85, 0.95), s, c);
+      const peak = rand(1.4, 2.5);
+      c.push(rand(0.9, 1.4), rand(0.9, 1.4), rand(1.4, peak), peak);
+      decline(rand(0.8, 1.0), 7 - c.length, c);
+      break;
+    }
+    case 'slump':
+      decline(rand(0.85, 0.95), 7, c);
+      break;
+    case 'chaos':
+      for (let i = 0; i < 7; i++) c.push(Math.random() < 0.25 ? rand(0.5, 0.75) : rand(0.8, 1.5));
+      break;
+  }
+  return c.slice(0, 7).map((v) => clamp(v, BALANCE.trendMin, BALANCE.trendMax));
+}
+
+function modeOf(trend: number): TrendMode {
+  return trend >= 1.8 ? 'boom' : trend <= 0.6 ? 'bored' : 'normal';
+}
+
+function newWeek(prevTrend: number): SeriesMarket {
+  const pattern = pickPattern();
+  const curve = makeCurve(pattern);
+  return { trend: curve[0], prevTrend, mode: modeOf(curve[0]), pattern, curve, dayIdx: 0 };
+}
+
 export function initMarket(): MarketState {
   const series: Record<string, SeriesMarket> = {};
-  for (const s of SERIES) {
-    const t = Math.exp(gauss() * 0.15);
-    series[s.id] = { trend: t, prevTrend: t, mode: 'normal', modeDays: 0 };
-  }
+  for (const s of SERIES) series[s.id] = newWeek(1);
   return { series, saturation: {} };
 }
 
-// TODO(balance): 状態遷移確率・ドリフト量は仮値
-function nextMode(sm: SeriesMarket): TrendMode {
-  const r = Math.random();
-  switch (sm.mode) {
-    case 'normal':
-      if (r < 0.12) return 'boom';
-      if (r < 0.24) return 'bored';
-      return 'normal';
-    case 'boom':
-      if (sm.modeDays < 2) return 'boom';
-      if (r < 0.15) return 'bored'; // ブームの反動で飽きる
-      if (r < 0.5) return 'normal';
-      return 'boom';
-    case 'bored':
-      if (sm.modeDays < 2) return 'bored';
-      if (r < 0.35) return 'normal';
-      return 'bored';
+/** 旧セーブ（パターン導入前）を読み込んだときに補う */
+export function migrateMarket(m: MarketState, day: number): void {
+  for (const s of SERIES) {
+    const sm = m.series[s.id] as SeriesMarket | undefined;
+    if (!sm || !Array.isArray(sm.curve)) {
+      const fresh = newWeek(sm?.trend ?? 1);
+      const idx = (day - 1) % BALANCE.daysPerWeek;
+      fresh.dayIdx = idx;
+      fresh.trend = fresh.curve[idx];
+      fresh.mode = modeOf(fresh.trend);
+      m.series[s.id] = fresh;
+    }
   }
 }
 
-/** 朝に 1 回呼ぶ：トレンドのランダムウォークと飽和の回復 */
-export function advanceMarketDay(m: MarketState): void {
+/** 朝に 1 回呼ぶ（day は新しい日）：週の頭なら新パターンを抽選し、その日の倍率にする */
+export function advanceMarketDay(m: MarketState, day: number): void {
+  const idx = (day - 1) % BALANCE.daysPerWeek;
   for (const id of Object.keys(m.series)) {
-    const sm = m.series[id];
-    const mode = nextMode(sm);
-    sm.modeDays = mode === sm.mode ? sm.modeDays + 1 : 0;
-    sm.mode = mode;
-    const logT = Math.log(sm.trend);
-    const drift = mode === 'boom' ? 0.2 : mode === 'bored' ? -0.15 : -0.25 * logT; // 通常時は 1.0 に引き戻す
-    sm.prevTrend = sm.trend;
-    sm.trend = clamp(Math.exp(logT + drift + gauss() * 0.1), BALANCE.trendMin, BALANCE.trendMax);
+    const old = m.series[id];
+    const sm = idx === 0 ? newWeek(old.trend) : old;
+    sm.prevTrend = old.trend;
+    sm.dayIdx = idx;
+    sm.trend = sm.curve[idx];
+    sm.mode = modeOf(sm.trend);
+    m.series[id] = sm;
   }
   for (const id of Object.keys(m.saturation)) {
     const s = m.saturation[id];
@@ -117,8 +186,8 @@ export type TrendSign = 'up' | 'down' | 'flat';
 
 export function trendSign(sm: SeriesMarket): TrendSign {
   const r = sm.trend / sm.prevTrend;
-  if (r > 1.03) return 'up';
-  if (r < 0.97) return 'down';
+  if (r > 1.05) return 'up';
+  if (r < 0.95) return 'down';
   return 'flat';
 }
 

@@ -39,7 +39,7 @@ function drawTrendMark(g: Phaser.GameObjects.Graphics, x: number, y: number, sm:
   }
   if (sm.mode === 'boom') {
     // 炎
-    const fx = x - 66;
+    const fx = x - 50;
     g.fillStyle(0xf08a4b, 1);
     g.fillTriangle(fx - 14, y + 16, fx + 14, y + 16, fx, y - 22);
     g.fillCircle(fx, y + 8, 14);
@@ -125,11 +125,39 @@ export class MarketScene extends Phaser.Scene {
       g.fillStyle(col, 0.9);
       g.fillRoundedRect(66, ry - 18, 14, 36, 4);
       txt(this, 96, ry, se.name, 30, { originX: 0, color: '#f2efe4' });
-      const label = sm.mode === 'boom' ? 'ブーム' : sm.mode === 'bored' ? '飽き気味' : '';
-      if (label) txt(this, 520, ry, label, 22, { originX: 1, color: sm.mode === 'boom' ? '#f6c48a' : '#c9c4d6' });
-      drawTrendMark(marks, 610, ry, sm);
+      this.drawWeekBars(marks, 330, ry, sm);
+      drawTrendMark(marks, 626, ry, sm);
     });
     return y + h;
+  }
+
+  /** 今週の値動き（チョークの棒グラフ）。未来の日は「?」 */
+  private drawWeekBars(g: Phaser.GameObjects.Graphics, x0: number, y: number, sm: SeriesMarket) {
+    const bw = 20;
+    const gap = 6;
+    const base = y + 26;
+    // 基準線（×1.0 の高さ）
+    const h1 = 28;
+    g.lineStyle(2, 0xe8e4d6, 0.4);
+    g.lineBetween(x0 - 4, base - h1, x0 + 7 * (bw + gap), base - h1);
+    for (let i = 0; i < 7; i++) {
+      const x = x0 + i * (bw + gap);
+      if (i > sm.dayIdx) {
+        g.fillStyle(0xe8e4d6, 0.3);
+        g.fillCircle(x + bw / 2, base - 6, 3);
+        continue;
+      }
+      const v = sm.curve[i];
+      // ×6 まで枠内に収まるよう高い側を圧縮
+      const h = Phaser.Math.Clamp(h1 * Math.pow(v, 0.6), 6, 52);
+      const col = v >= 1.8 ? 0xf6c48a : v >= 1 ? 0x9be0a4 : 0xf2a0b4;
+      g.fillStyle(col, i === sm.dayIdx ? 1 : 0.6);
+      g.fillRect(x, base - h, bw, h);
+      if (i === sm.dayIdx) {
+        g.lineStyle(3, 0xffffff, 0.9);
+        g.strokeRect(x - 2, base - h - 2, bw + 4, h + 4);
+      }
+    }
   }
 
   /** ガラスのショーケース */
