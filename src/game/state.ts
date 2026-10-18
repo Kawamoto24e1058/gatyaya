@@ -44,8 +44,8 @@ export type GameState = {
   apBonusTomorrow: number;
   /** 前回のバイト（続けて同じ仕事が出ないように） */
   lastBaito: string;
-  /** 募集中のバイト（「やめる」で引き直せないよう、遊ぶまで固定） */
-  nextBaito: string;
+  /** 掲示板に貼られている求人（「やめる」で引き直せないよう、遊ぶまで固定） */
+  baitoBoard: string[];
   inventory: Record<string, number>;
   market: MarketState;
   events: EventState;
@@ -83,7 +83,7 @@ export function newGame(): GameState {
     nightBoost: false,
     apBonusTomorrow: 0,
     lastBaito: '',
-    nextBaito: '',
+    baitoBoard: [],
     inventory: {},
     market: initMarket(),
     events: initEvents(),
@@ -235,7 +235,7 @@ export function loadSave(): GameState | null {
     s.nightBoost ??= false;
     s.apBonusTomorrow ??= 0;
     s.lastBaito ??= '';
-    s.nextBaito ??= '';
+    s.baitoBoard ??= [];
     s.events ??= initEvents();
     s.jarShiny ??= s.jar.map(() => false);
     s.today.shuffles ??= 0;

@@ -950,7 +950,7 @@ export class ShopScene extends Phaser.Scene {
       const hit = this.add.zone(x, y, 64, 84).setInteractive({ useHandCursor: true });
       hit.on('pointerdown', () => {
         sfx.play('tap');
-        toast(this, '縁起物（レリック）の入手方法\n・返済日に取り立て屋の品から 1 つ選べる\n・ガチャからまれに出る「黒いカプセル」', this.jar.top + 90);
+        toast(this, '縁起物（レリック）の入手方法\n・返済日に取り立て屋の品から 1 つ選べる\n・ガチャからまれに出る「黒いカプセル」\n・バイト「くじの検品」で招き猫をそろえる', this.jar.top + 90);
       });
       this.tweens.add({ targets: q, alpha: { from: 0.35, to: 0.75 }, duration: 1200, yoyo: true, repeat: -1 });
       c.add([g, q, hit]);

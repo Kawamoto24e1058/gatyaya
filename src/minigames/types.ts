@@ -8,6 +8,7 @@ export type Reward =
   | { kind: 'coins'; amount: number } // 追加のコイン（両替ボーナス）
   | { kind: 'nightBoost' } // 今夜は化ける確率 ×2
   | { kind: 'apTomorrow'; amount: number } // 明日の提灯（AP）+n
+  | { kind: 'relic' } // 縁起物を 3 つから 1 つ選べる（選ぶ画面はバイト画面が出す）
   | { kind: 'none' };
 
 /** 仕様書 5 章の MiniGame インターフェース（update / destroy は進行管理用に追加） */
@@ -19,6 +20,8 @@ export interface MiniGame {
   onEnd(): { coins: number; bonus?: Reward; summary?: string };
   update?(dtSec: number): void;
   destroy?(): void;
+  /** 時間切れ前に終わる遊び（くじを全部削った等）は true を返す */
+  isDone?(): boolean;
 }
 
 export type MiniGameDef = {
@@ -28,6 +31,8 @@ export type MiniGameDef = {
   howTo: string;
   /** お金以外の見返りの説明 */
   bonusText: string;
+  /** 運しだいの仕事（掲示板で「運」の札が付く） */
+  luck?: boolean;
   create: () => MiniGame;
 };
 
@@ -43,6 +48,8 @@ export function rewardLabel(r: Reward): string {
       return '今夜はカプセルが化けやすい（×2）';
     case 'apTomorrow':
       return `明日の提灯（AP）+${r.amount}`;
+    case 'relic':
+      return '縁起物をひとつもらえる';
     case 'none':
       return '';
   }
@@ -65,6 +72,8 @@ export function applyReward(s: GameState, r: Reward): void {
       break;
     case 'apTomorrow':
       s.apBonusTomorrow += r.amount;
+      break;
+    case 'relic':
       break;
     case 'none':
       break;

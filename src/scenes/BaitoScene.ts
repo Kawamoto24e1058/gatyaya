@@ -1,19 +1,21 @@
-// バイト（ミニゲーム）の進行：説明 → カウントダウン → プレイ → 結果
+// バイト（ミニゲーム）の進行：掲示板で仕事を選ぶ → カウントダウン → プレイ → 結果
 import Phaser from 'phaser';
-import { BALANCE, CSS, GAME_H, GAME_W, PAL } from '../config';
+import { BALANCE, BOTTOM, CSS, GAME_H, GAME_W, PAL } from '../config';
 import { sfx } from '../core/audio';
 import { fmt } from '../core/util';
-import { runHook } from '../game/relics';
-import { S, save } from '../game/state';
-import { MINIGAME_BY_ID, pickMiniGame } from '../minigames/registry';
+import { rollRelics, runHook } from '../game/relics';
+import { addRelic, S, save } from '../game/state';
+import { MINIGAME_BY_ID, pickBoard } from '../minigames/registry';
 import { applyReward, rewardLabel, type MiniGame, type MiniGameDef } from '../minigames/types';
 import { Hud } from '../ui/Hud';
+import { showRelicPicker } from '../ui/RelicPicker';
 import { Button, countUp, drawPlate, stamp, title, txt } from '../ui/widgets';
 
 const M = GAME_H / 2;
 
 export class BaitoScene extends Phaser.Scene {
   private def!: MiniGameDef;
+  private board: MiniGameDef[] = [];
   private game_: MiniGame | null = null;
   private hud!: Hud;
   private remaining = 0;
@@ -27,10 +29,14 @@ export class BaitoScene extends Phaser.Scene {
   }
 
   init(data: { id?: string }) {
-    // id 指定がなければ毎回くじ引き（前回と同じ仕事は避ける）。遊ぶまでは同じ募集のまま
+    // 掲示板の求人は遊ぶまで貼り替えない（「やめる」で引き直せないように）
     const s = S();
-    this.def = (data?.id && MINIGAME_BY_ID[data.id]) || MINIGAME_BY_ID[s.nextBaito] || pickMiniGame(s.lastBaito);
-    s.nextBaito = this.def.id;
+    if (s.baitoBoard.length === 0 || s.baitoBoard.some((id) => !MINIGAME_BY_ID[id])) {
+      s.baitoBoard = pickBoard(s.lastBaito);
+      save();
+    }
+    this.board = s.baitoBoard.map((id) => MINIGAME_BY_ID[id]);
+    this.def = (data?.id && MINIGAME_BY_ID[data.id]) || this.board[0];
     this.game_ = null;
     this.playing = false;
   }
@@ -47,30 +53,27 @@ export class BaitoScene extends Phaser.Scene {
     this.showIntro();
   }
 
+  /** 掲示板：求人チラシが 3 枚。1 枚選んで「はじめる」 */
   private showIntro() {
     const c = this.add.container(0, 0).setDepth(700);
-    // 求人チラシ
-    const flyer = this.add.container(360, M - 40).setAngle(-2);
-    const g = this.add.graphics();
-    drawPlate(g, -300, -330, 600, 560, PAL.paper, { radius: 10, shadow: 9, outline: 5, shine: false });
-    g.fillStyle(PAL.vermilion, 1);
-    g.fillRect(-300, -330, 600, 96);
-    g.fillStyle(PAL.ink, 1);
-    g.fillRect(-300, -238, 600, 5);
-    // 画鋲
-    g.fillStyle(PAL.ink, 1);
-    g.fillCircle(0, -334, 14);
-    g.fillStyle(PAL.mustard, 1);
-    g.fillCircle(0, -336, 9);
-    flyer.add(g);
-    flyer.add(title(this, -150, -282, '急募！', 52, CSS.cream));
-    flyer.add(txt(this, 140, -282, `バイト\n${this.def.name}`, 28, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 5 }));
-    flyer.add(txt(this, 0, -150, this.def.howTo, 26, { color: CSS.ink, wrap: 540 }));
-    flyer.add(txt(this, 0, -40, '時給：少ないが確実', 26, { color: CSS.bad }));
-    flyer.add(txt(this, 0, 40, `特典：${this.def.bonusText}`, 22, { color: CSS.inkSoft, wrap: 540 }));
-    flyer.add(txt(this, 0, 150, '面接なし・即日勤務OK', 20, { color: CSS.inkSoft, bold: false }));
-    c.add(flyer);
-    const start = new Button(this, 360, M + 300, {
+    const top = this.hudBottom + 30;
+    const bottom = BOTTOM - 272;
+    // コルクの掲示板
+    const bg = this.add.graphics();
+    drawPlate(bg, 24, top, 672, bottom - top, PAL.woodDark, { radius: 14, shadow: 8, outline: 5, shine: false });
+    bg.fillStyle(0xb98a5a, 1);
+    bg.fillRoundedRect(40, top + 56, 640, bottom - top - 72, 8);
+    bg.fillStyle(0x000000, 0.08);
+    for (let i = 0; i < 90; i++) bg.fillCircle(50 + ((i * 97) % 620), top + 66 + ((i * 53) % (bottom - top - 92)), 2 + (i % 3));
+    c.add(bg);
+    c.add(txt(this, 360, top + 30, 'バイト募集の掲示板', 28, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 6 }));
+
+    const n = this.board.length;
+    const areaTop = top + 70;
+    const slotH = (bottom - areaTop - 14) / n;
+    const fh = Math.min(260, slotH - 16);
+    let selected = -1;
+    const start = new Button(this, 360, BOTTOM - 170, {
       w: 420,
       h: 110,
       color: PAL.moss,
@@ -81,15 +84,56 @@ export class BaitoScene extends Phaser.Scene {
         this.begin();
       },
     });
-    const cancel = new Button(this, 360, M + 430, { w: 300, h: 80, color: PAL.plum, label: 'やめる', size: 28, onPress: () => this.leave() });
+    start.setEnabled(false);
+    const flyers = this.board.map((def, i) => {
+      const f = this.add.container(360, areaTop + slotH * i + slotH / 2).setAngle(i % 2 ? 1.5 : -1.5);
+      const g = this.add.graphics();
+      drawPlate(g, -300, -fh / 2, 600, fh, PAL.paper, { radius: 8, shadow: 7, outline: 5, shine: false });
+      g.fillStyle(def.luck ? PAL.lavender : PAL.vermilion, 1);
+      g.fillRect(-300, -fh / 2, 96, fh);
+      g.fillStyle(PAL.ink, 1);
+      g.fillCircle(0, -fh / 2, 10);
+      g.fillStyle(PAL.mustard, 1);
+      g.fillCircle(0, -fh / 2 - 2, 6);
+      f.add(g);
+      f.add(txt(this, -252, -fh / 2 + 44, def.luck ? '運' : '腕', 44, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 6 }));
+      f.add(txt(this, -252, fh / 2 - 40, def.luck ? '一発\n勝負' : 'コツ\nコツ', 20, { color: CSS.cream }));
+      f.add(txt(this, 40, -fh / 2 + 34, def.name, 32, { color: CSS.ink }));
+      f.add(txt(this, 40, -4, def.howTo, 22, { color: CSS.ink, bold: false, wrap: 480 }));
+      f.add(txt(this, 40, fh / 2 - 34, `特典：${def.bonusText}`, 20, { color: CSS.inkSoft, wrap: 480 }));
+      const ring = this.add.graphics();
+      ring.lineStyle(7, PAL.vermilion, 1);
+      ring.strokeRoundedRect(-306, -fh / 2 - 6, 612, fh + 12, 12);
+      ring.setVisible(false);
+      f.add(ring);
+      const mark = title(this, 250, -fh / 2 + 30, 'これ!', 30, CSS.bad).setAngle(14).setVisible(false);
+      f.add(mark);
+      f.setSize(600, fh).setInteractive({ useHandCursor: true });
+      f.on('pointerdown', () => {
+        if (selected === i) return;
+        selected = i;
+        this.def = def;
+        sfx.play('flip', { rate: 1.2 });
+        flyers.forEach((o, k) => {
+          o.ring.setVisible(k === i);
+          o.mark.setVisible(k === i);
+          o.f.setScale(k === i ? 1.03 : 1);
+        });
+        start.setEnabled(true).setPulse(true);
+      });
+      c.add(f);
+      return { f, ring, mark };
+    });
+    const cancel = new Button(this, 360, BOTTOM - 62, { w: 300, h: 80, color: PAL.plum, label: 'やめる', size: 28, onPress: () => this.leave() });
     c.add([start, cancel]);
+    c.add(txt(this, 360, bottom + 16, '貼り紙をタップして選ぶ', 22, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 5 }));
   }
 
   private begin() {
     const s = S();
     s.ap -= BALANCE.apCost.baito;
     s.lastBaito = this.def.id;
-    s.nextBaito = '';
+    s.baitoBoard = [];
     save();
     this.hud.refresh();
     const n = title(this, 360, M - 60, '3', 150, CSS.cream).setDepth(800);
@@ -128,7 +172,7 @@ export class BaitoScene extends Phaser.Scene {
     drawPlate(g, 40, ty, 640, 26, PAL.night, { radius: 13, shadow: 4, outline: 4, shine: false });
     g.fillStyle(ratio < 0.2 ? PAL.vermilion : PAL.mustard, 1);
     g.fillRoundedRect(40, ty, Math.max(26, 640 * ratio), 26, 13);
-    if (this.remaining <= 0) this.finish();
+    if (this.remaining <= 0 || this.game_.isDone?.()) this.finish();
   }
 
   private finish() {
@@ -141,8 +185,24 @@ export class BaitoScene extends Phaser.Scene {
     result.coins = runHook(s, 'onBaito', result.coins);
     s.coins += result.coins;
     s.today.wages += result.coins;
+    // 縁起物が出たが、もう全部持っている場合はお金に替える
+    const relicChoices = result.bonus?.kind === 'relic' ? rollRelics(s, 3, ['common', 'rare']) : [];
+    if (result.bonus?.kind === 'relic' && relicChoices.length === 0) result.bonus = { kind: 'coins', amount: 60 };
     if (result.bonus) applyReward(s, result.bonus);
     save();
+    if (relicChoices.length > 0) {
+      this.time.delayedCall(1200, () =>
+        showRelicPicker(this, {
+          heading: '招き猫のご利益！',
+          sub: '縁起物をひとつ持っていける',
+          relics: relicChoices,
+          onDone: (r) => {
+            if (r) addRelic(s, r.id);
+            save();
+          },
+        }),
+      );
+    }
     sfx.play('reji', { rate: 1.1 });
 
     const c = this.add.container(0, 0).setDepth(900);

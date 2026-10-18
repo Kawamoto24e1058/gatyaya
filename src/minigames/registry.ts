@@ -1,10 +1,13 @@
 // バイトの登録。ここに 1 件追加するだけで新しいバイトが増える。
+import Phaser from 'phaser';
 import { BoxStackGame, STACK_BONUS_BOXES } from './BoxStack';
 import { BUBBLE_BONUS_SHEETS, BubbleWrapGame } from './BubbleWrap';
 import { CAPSULE_FILL_BONUS_THRESHOLD, CapsuleFillGame } from './CapsuleFill';
 import { COIN_BONUS_CORRECT, CoinSortGame } from './CoinSort';
 import { GHOST_BONUS, GhostWhackGame } from './GhostWhack';
 import { LANTERN_BONUS_LIT, LanternGame } from './Lantern';
+import { OmikujiGame, OMIKUJI_BONUS_DAIKICHI } from './Omikuji';
+import { ScratchGame } from './Scratch';
 import type { MiniGameDef } from './types';
 
 export const MINIGAMES: MiniGameDef[] = [
@@ -50,12 +53,33 @@ export const MINIGAMES: MiniGameDef[] = [
     bonusText: `${LANTERN_BONUS_LIT}個以上灯すと 明日の提灯（AP）+1`,
     create: () => new LanternGame(),
   },
+  {
+    id: 'scratch',
+    name: 'くじの検品',
+    howTo: 'スクラッチくじを指でこすって削る\n同じ絵が 3 つそろえば当たり（4 枚）',
+    bonusText: '招き猫が 3 つそろうと 縁起物をひとつもらえる',
+    luck: true,
+    create: () => new ScratchGame(),
+  },
+  {
+    id: 'omikuji',
+    name: 'おみくじ番',
+    howTo: 'おみくじを引くほど稼ぎが増える\n凶が出たらその回の稼ぎは没収。やめ時が肝心（3 回）',
+    bonusText: `大吉を${OMIKUJI_BONUS_DAIKICHI}回引くと 今夜は化けやすい（×2）`,
+    luck: true,
+    create: () => new OmikujiGame(),
+  },
 ];
 
 export const MINIGAME_BY_ID: Record<string, MiniGameDef> = Object.fromEntries(MINIGAMES.map((m) => [m.id, m]));
 
-/** 今日のバイトをくじ引きで決める（前回と同じ仕事は続けて出さない） */
-export function pickMiniGame(lastId: string): MiniGameDef {
+/** 掲示板に貼る求人を n 件選ぶ。前回の仕事は外し、運しだいの仕事を必ず 1 件入れる */
+export function pickBoard(lastId: string, n = 3): string[] {
   const pool = MINIGAMES.filter((m) => m.id !== lastId);
-  return pool[Math.floor(Math.random() * pool.length)];
+  const luck = pool.filter((m) => m.luck);
+  const out: MiniGameDef[] = [];
+  if (luck.length > 0) out.push(luck[Math.floor(Math.random() * luck.length)]);
+  const rest = pool.filter((m) => !out.includes(m));
+  while (out.length < n && rest.length > 0) out.push(rest.splice(Math.floor(Math.random() * rest.length), 1)[0]);
+  return Phaser.Utils.Array.Shuffle(out).map((m) => m.id);
 }
