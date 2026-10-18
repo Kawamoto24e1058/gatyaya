@@ -133,7 +133,7 @@ export class BoxStackGame implements MiniGame {
       this.streak += 1;
       sfx.play('snap', { rate: 0.8 + Math.min(this.streak, 10) * 0.05 });
       popText(this.scene, x, m.obj.y - 60 + this.world.y, 'ピタッ！', CSS.gold);
-      this.coins += 4;
+      this.coins += 3;
     } else {
       // はみ出た分を切り落とす
       w = Math.min(m.w, overlap);
@@ -145,7 +145,7 @@ export class BoxStackGame implements MiniGame {
       this.scene.tweens.add({ targets: cut, y: cut.y + 500, angle: 60 * Math.sign(offset), alpha: 0, duration: 600, onComplete: () => cut.destroy() });
       sfx.play('knock', { rate: 0.8 });
       this.streak = 0;
-      this.coins += 2;
+      this.coins += 1;
     }
     m.obj.destroy();
     const box = { x, w, obj: this.makeBox(x, this.topY(), w) };
