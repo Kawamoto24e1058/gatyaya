@@ -1,0 +1,9 @@
+{
+  // Cloudflare Workers の静的アセット配信（旧 Cloudflare Pages 相当・無料枠）
+  "name": "gatyaya",
+  "compatibility_date": "2026-10-12",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  }
+}

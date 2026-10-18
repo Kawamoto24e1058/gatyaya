@@ -14,18 +14,18 @@ npm run preview  # ビルド成果物の確認
 
 Node.js は 20.19 以上（または 22.12 以上）が必要です（Vite 8 の要件）。
 
-## Cloudflare Pages へのデプロイ
+## デプロイ（Cloudflare）
 
-ダッシュボードで GitHub リポジトリを接続し、次のように設定します。
+公開 URL：https://gatyaya.momotech.workers.dev
 
-| 項目 | 値 |
-|---|---|
-| Framework preset | なし（None） |
-| Build command | `npm run build` |
-| Build output directory | `dist` |
-| 環境変数 | `NODE_VERSION=22` |
+Cloudflare Pages は Workers に統合されたため、Workers の静的アセット配信（無料枠）で公開しています。設定は `wrangler.jsonc`。
 
-CLI から直接アップロードする場合：`npm run build && npx wrangler pages deploy dist`
+```bash
+npm run deploy   # = npm run build && wrangler deploy
+```
+
+環境変数 `CLOUDFLARE_API_TOKEN` と `CLOUDFLARE_ACCOUNT_ID` が必要です（または `npx wrangler login`）。
+GitHub への push で自動デプロイしたい場合は、Cloudflare ダッシュボードの Workers & Pages → gatyaya → Settings → Build で、このリポジトリを接続します（Build command：`npm run build`、Deploy command：`npx wrangler deploy`）。
 
 ## 画風（デザインの方針）
 
