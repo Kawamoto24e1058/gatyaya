@@ -34,3 +34,10 @@ new Phaser.Game({
   },
   scene: [BootScene, ShopScene, MarketScene, BaitoScene, CloseScene, PaydayScene, GameOverScene],
 });
+
+// ホーム画面に追加したとき、オフラインでも起動できるようにする（本番ビルドのみ）
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => undefined);
+  });
+}

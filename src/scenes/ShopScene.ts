@@ -10,6 +10,7 @@ import { Capsule } from '../game/Capsule';
 import { adjustedSeriesWeights } from '../game/events';
 import { RELIC_BY_ID, rollRelics, runHook } from '../game/relics';
 import { showKawaraban } from '../ui/Kawaraban';
+import { Coach } from '../ui/Coach';
 import { showRelicPicker } from '../ui/RelicPicker';
 import { omamoriKey } from '../ui/textures';
 import { addRelic, daysUntilPayday, dueAmount, inventoryCount, isPayday, jarCapacity, pullCost, S, save, saveNow, sellApCost, shufflesPerDay } from '../game/state';
@@ -23,6 +24,22 @@ import { canvasTex } from '../ui/textures';
 import { Button, drawPlate, floatText, stamp, toast, txt } from '../ui/widgets';
 
 const BTN_H = 112;
+const TUTORIAL_KEY = 'gatyaya.tutorial';
+const TUTORIAL_DONE = 99;
+function loadTutorialStep(): number {
+  try {
+    return Number(localStorage.getItem(TUTORIAL_KEY) ?? 0) || 0;
+  } catch {
+    return TUTORIAL_DONE;
+  }
+}
+function saveTutorialStep(n: number) {
+  try {
+    localStorage.setItem(TUTORIAL_KEY, String(n));
+  } catch {
+    /* noop */
+  }
+}
 /** くっついてから合成するまでの待ち（目印を見せる時間） */
 const FUSE_WAIT_MS = 450;
 
@@ -47,6 +64,8 @@ export class ShopScene extends Phaser.Scene {
   private revealing = 0;
   private restoreQueue: { r: Rarity; shiny: boolean }[] = [];
   private relicShelf?: Phaser.GameObjects.Container;
+  private coach?: Coach;
+  private machineTop = 0;
   private shelfKey = '';
   private clusterSince = new Map<Capsule, number>();
   private lastClusterCheck = 0;
@@ -132,7 +151,10 @@ export class ShopScene extends Phaser.Scene {
     });
 
     this.refreshUI(false);
+    this.coach = new Coach(this);
+    this.machineTop = machineTop;
     if (S().pendingMorning) this.morningBanner();
+    else this.tutorial('start');
   }
 
   // ---------- 描画 ----------
@@ -259,7 +281,8 @@ export class ShopScene extends Phaser.Scene {
     this.jarLabel.setText(`瓶 ${this.capsules.length}/${jarCapacity(s)}`);
     this.jarLabel.setColor(full ? CSS.bad : CSS.ink);
     this.invLabel.setText(`所持 ${inventoryCount(s)}`);
-    this.emptyHint.setVisible(this.capsules.length === 0 && s.jar.length === 0 && s.totals.pulls < 3);
+    // 初回の説明中はガチャ機がしゃべるので、案内文は出さない
+    this.emptyHint.setVisible(this.capsules.length === 0 && s.jar.length === 0 && s.totals.pulls < 3 && loadTutorialStep() >= TUTORIAL_DONE);
     this.btnSell.setLabel('売る', `出店 ${sellApCost(s)}AP`);
     this.btnSell.setEnabled(s.ap >= sellApCost(s) && inventoryCount(s) > 0);
     this.machine.setPrice?.(pullCost(s, this.def.cost));
@@ -318,6 +341,7 @@ export class ShopScene extends Phaser.Scene {
     this.tweens.add({ targets: c, scale: 1, duration: 220, ease: 'Back.easeOut' });
     this.noteBest(rarity);
     this.rareDispenseFx(rarity, out.x, out.y);
+    this.tutorial('pulled');
     this.refreshUI();
     save();
   }
@@ -660,6 +684,7 @@ export class ShopScene extends Phaser.Scene {
     s.inventory[stock] = (s.inventory[stock] ?? 0) + 1;
     s.today.opened += 1;
     this.revealItem(prize, x, y, c.shiny);
+    this.tutorial('opened');
     this.refreshUI();
     save();
   }
@@ -768,6 +793,42 @@ export class ShopScene extends Phaser.Scene {
     this.tweens.add({ targets: c, alpha: 1, x, duration: 260, ease: 'Back.easeOut' });
     this.time.delayedCall(200, () => sfx.play('stamp', { vol: 0.7 }));
     return c;
+  }
+
+  // ---------- 初回の説明 ----------
+
+  /**
+   * 段階：0 回す → 1 開ける → 2 合成と売る → 3 提灯と返済 → 完了。
+   * 進み具合はセーブとは別に保存し、やり直しても繰り返さない。
+   */
+  private tutorial(ev: 'start' | 'pulled' | 'opened' | 'market' | 'wake') {
+    const step = loadTutorialStep();
+    if (step >= TUTORIAL_DONE || !this.coach) return;
+    const at = { x: 360, y: this.machineTop + 70 };
+    const firstCapsule = () => {
+      const c = this.capsules.find((x) => x.active && !x.busy);
+      return c ? { x: c.x, y: c.y - RARITY_INFO[c.rarity].radius - 4 } : null;
+    };
+    if (step === 0 && ev === 'start') {
+      this.coach.say(at, 'よう店主！ まずはオイラのハンドルを\nぐるっと回してみな');
+    } else if (step === 0 && ev === 'pulled') {
+      saveTutorialStep(1);
+      this.coach.say(at, '出てきたカプセルを\nタップして開けてみな', firstCapsule);
+    } else if (step === 1 && ev === 'opened') {
+      saveTutorialStep(2);
+      this.coach.say(at, '同じ色が 3 つくっつくと「色違い」に化けるぞ。\n「まぜる」で瓶を揺すれる');
+      this.time.delayedCall(4200, () => {
+        if (loadTutorialStep() !== 2) return;
+        this.coach?.say(at, 'グッズは「売る」でコインに換えな。\n相場は毎日変わる。瓦版の噂も見とけよ', () => ({ x: 128, y: this.btnY - 70 }));
+      });
+    } else if (step === 2 && ev === 'market') {
+      saveTutorialStep(3);
+      this.coach.clear();
+    } else if (step === 3 && ev === 'wake') {
+      saveTutorialStep(TUTORIAL_DONE);
+      this.coach.say(at, '提灯（AP）がなくなったら閉店だ。\n7 日ごとに取り立て屋が来る。それまでに稼げ！', () => ({ x: 245, y: Hud.bottom() - 30 }));
+      this.time.delayedCall(6000, () => this.coach?.clear());
+    }
   }
 
   // ---------- 瓦版（噂） ----------
@@ -902,6 +963,7 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private goMarket() {
+    this.tutorial('market');
     const s = S();
     s.ap -= sellApCost(s);
     this.leaveTo('Market');
@@ -927,6 +989,7 @@ export class ShopScene extends Phaser.Scene {
     this.closeArmedUntil = 0;
     this.refreshUI();
     if (S().pendingMorning) this.morningBanner();
+    else this.tutorial('wake');
   }
 
   /** 朝の「のれん」：日付と返済日の予告 */
@@ -976,6 +1039,8 @@ export class ShopScene extends Phaser.Scene {
         // のれんが上がったら瓦版（噂）→ 夜のうちに化けたカプセル
         this.openKawaraban(() => {
           if (S().nightChanges.length > 0) this.time.delayedCall(200, () => this.playNightChanges());
+          this.tutorial('start');
+          this.tutorial('wake');
         });
       },
     });
@@ -984,6 +1049,7 @@ export class ShopScene extends Phaser.Scene {
 
   update() {
     this.checkClusters();
+    this.coach?.update();
     for (const c of this.capsules) {
       c.syncGlow();
       // 万一すり抜けたら瓶へ戻す
