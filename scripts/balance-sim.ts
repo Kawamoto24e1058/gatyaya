@@ -10,6 +10,7 @@ import { parseStock, prizesOf, stockKey } from '../src/data/prizes';
 import { RARITIES, type Rarity } from '../src/data/rarity';
 import { canSell, sellOne, sellPrice } from '../src/game/market';
 import { paydayOffer, rollRelics, runHook } from '../src/game/relics';
+import { pullRelicGacha, relicGachaPrice } from '../src/game/relicGacha';
 import { addRelic, advanceDay, jarCapacity, newGame, payDebt, pullCost, sellApCost, type GameState } from '../src/game/state';
 
 const USE_RELICS = process.env.RELICS !== '0';
@@ -38,6 +39,8 @@ type Strategy = {
   /** その日の売却で、このキーを売るか */
   shouldSell: (s: GameState, key: string, daysLeft: number) => boolean;
 };
+
+const GACHA_RELICS = process.env.RGACHA !== '0';
 
 function pull(s: GameState) {
   const cost = pullCost(s, machine.cost);
@@ -115,6 +118,11 @@ function playDay(s: GameState, st: Strategy): void {
     if (Math.random() < BAITO_BONUS_RATE) s.jarBonusWeek += 1;
   }
   const payday = daysLeft === 0;
+  // 縁起物ガチャ：週の前半、代金の 2.5 倍以上あれば回す（訳ありは半々で持っていく）
+  if (USE_RELICS && GACHA_RELICS && daysLeft >= 3 && s.coins >= relicGachaPrice(s) * 2.5) {
+    const r = pullRelicGacha(s);
+    if (r && (r.rarity !== 'boss' || Math.random() < 0.5)) addRelic(s, r.id);
+  }
   // 返済日は、ノルマに届かない分を残して回さない
   const reserve = payday ? s.quota : 0;
   pullAll(s, reserve);

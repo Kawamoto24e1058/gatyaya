@@ -9,6 +9,7 @@ import { RARITY_INFO, type Rarity } from '../data/rarity';
 import { Capsule } from '../game/Capsule';
 import { adjustedSeriesWeights } from '../game/events';
 import { RELIC_BY_ID, rollRelics, runHook } from '../game/relics';
+import { pullRelicGacha, RELIC_GACHA, relicGachaBlocked, relicGachaPrice } from '../game/relicGacha';
 import { showKawaraban } from '../ui/Kawaraban';
 import { Coach } from '../ui/Coach';
 import { tilt } from '../core/tilt';
@@ -179,6 +180,7 @@ export class ShopScene extends Phaser.Scene {
     this.add.image(0, 0, key).setOrigin(0).setDepth(0);
     addLantern(this, 640, hudBottom - 6, 0.8, 8);
     addPeekingEyes(this, 623, hudBottom + 22 + 3 * 64 + 36, 4);
+    this.buildRelicGachaSign(623, hudBottom + 22 + 3 * 64 + 36);
     addWisps(this, { x: 40, y: hudBottom + 40, w: 160, h: 360 }, 2, 5);
     addDust(this, { x: 0, y: hudBottom, w: GAME_W, h: this.jar.top - hudBottom }, 6);
   }
@@ -950,13 +952,140 @@ export class ShopScene extends Phaser.Scene {
       const hit = this.add.zone(x, y, 64, 84).setInteractive({ useHandCursor: true });
       hit.on('pointerdown', () => {
         sfx.play('tap');
-        toast(this, '縁起物（レリック）の入手方法\n・返済日に取り立て屋の品から 1 つ選べる\n・ガチャからまれに出る「黒いカプセル」\n・バイト「くじの検品」で招き猫をそろえる', this.jar.top + 90);
+        toast(this, '縁起物（レリック）の入手方法\n・右の暗がりの「縁起物ガチャ」（1 日 1 回）\n・返済日に取り立て屋の品から 1 つ\n・ガチャからまれに出る「黒いカプセル」\n・バイト「くじの検品」で招き猫', this.jar.top + 90);
       });
       this.tweens.add({ targets: q, alpha: { from: 0.35, to: 0.75 }, duration: 1200, yoyo: true, repeat: -1 });
       c.add([g, q, hit]);
     }
     if (ids.length > slots.length) c.add(txt(this, 628, top + 450, `ほか${ids.length - slots.length}個`, 20, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 4 }));
     this.relicShelf = c;
+  }
+
+  /** 右の暗がりに「縁起物ガチャ」の札。タップでガチャの画面を開く */
+  private buildRelicGachaSign(x: number, y: number) {
+    const tag = this.add.container(x, y - 8).setDepth(9);
+    const g = this.add.graphics();
+    g.lineStyle(2, PAL.mustard, 0.8);
+    g.lineBetween(-40, -30, -40, -18);
+    g.lineBetween(40, -30, 40, -18);
+    drawPlate(g, -84, -20, 168, 46, PAL.night, { radius: 8, shadow: 3, outline: 3, shine: false });
+    tag.add(g);
+    tag.add(txt(this, 0, 3, '縁起物ガチャ', 24, { color: CSS.gold }));
+    this.tweens.add({ targets: tag, angle: { from: -2, to: 2 }, duration: 1600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    tag.setSize(160, 70).setInteractive({ useHandCursor: true });
+    tag.on('pointerdown', () => {
+      sfx.play('knock', { rate: 0.7 });
+      this.openRelicGacha();
+    });
+  }
+
+  /** 縁起物ガチャの画面：暗がりから出てくる一つ目の小さなガチャ */
+  private openRelicGacha() {
+    const s = S();
+    this.machine.setInputEnabled(false);
+    const cy = GAME_H / 2 - 40;
+    const root = this.add.container(0, 0).setDepth(2900);
+    root.add(this.add.rectangle(GAME_W / 2, GAME_H / 2, GAME_W, GAME_H, PAL.ink, 0.93).setInteractive());
+    root.add(txt(this, 360, cy - 330, '暗がりの縁起物ガチャ', 40, { color: CSS.gold, stroke: CSS.ink, strokeThickness: 8 }));
+    root.add(txt(this, 360, cy - 280, '「…ヒヒ、1 日 1 回だけ回させてやる」', 22, { color: CSS.sub }));
+
+    // 一つ目の小さなガチャ
+    const m = this.add.container(360, cy);
+    const g = this.add.graphics();
+    g.fillStyle(PAL.ink, 1);
+    g.fillCircle(6, -96, 116);
+    g.fillStyle(0x3a2a48, 1);
+    g.fillCircle(0, -100, 112);
+    g.fillStyle(0xffffff, 0.08);
+    g.fillCircle(-36, -140, 40);
+    const charmCols = [PAL.vermilion, PAL.mustard, PAL.moss, PAL.teal, PAL.lavender, PAL.paper];
+    for (let i = 0; i < 11; i++) {
+      const a = (i / 11) * Math.PI * 2;
+      const r = 30 + (i % 3) * 22;
+      g.fillStyle(charmCols[i % charmCols.length], 0.9);
+      g.fillRoundedRect(Math.cos(a) * r - 12, -90 + Math.sin(a) * r * 0.7 - 16, 24, 32, 6);
+    }
+    drawPlate(g, -130, -10, 260, 210, PAL.plum, { radius: 26, shadow: 8, outline: 6, shine: true });
+    g.fillStyle(PAL.ink, 1);
+    g.fillRoundedRect(-40, 140, 80, 40, 10);
+    m.add(g);
+    // 大きな一つ目（まばたき）
+    const eyeWhite = this.add.ellipse(0, 70, 120, 84, 0xf6ead2).setStrokeStyle(6, PAL.ink);
+    const pupil = this.add.circle(0, 72, 24, PAL.ink);
+    const glint = this.add.circle(8, 62, 7, 0xffffff);
+    m.add([eyeWhite, pupil, glint]);
+    root.add(m);
+    this.tweens.add({ targets: [pupil, glint], x: '+=18', duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    this.tweens.add({ targets: eyeWhite, scaleY: 0.08, duration: 80, yoyo: true, repeat: -1, repeatDelay: 2600 });
+
+    const price = relicGachaPrice(s);
+    const w = RELIC_GACHA.weights;
+    root.add(txt(this, 360, cy + 240, `1 回 ${price} コイン`, 34, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 7 }));
+    root.add(txt(this, 360, cy + 288, `並 ${Math.round(w.common * 100)}%／上 ${Math.round(w.rare * 100)}%／訳あり ${Math.round(w.boss * 100)}%　（同じ週にもう一度回すと倍）`, 19, { color: CSS.sub, bold: false }));
+
+    const close = () => {
+      this.machine.setInputEnabled(true);
+      this.tweens.add({ targets: root, alpha: 0, duration: 160, onComplete: () => root.destroy() });
+    };
+    const blocked = relicGachaBlocked(s);
+    const turn = new Button(this, 360, cy + 380, {
+      w: 380,
+      h: 104,
+      color: PAL.vermilion,
+      label: '回す',
+      sub: blocked ?? `${price} コイン`,
+      onPress: () => {
+        const relic = pullRelicGacha(s);
+        if (!relic) return;
+        save();
+        this.refreshUI();
+        turn.setEnabled(false);
+        back.setEnabled(false);
+        sfx.play('gari', { rate: 0.7 });
+        sfx.play('rumble', { rate: 1.3 });
+        this.tweens.add({ targets: m, angle: { from: -5, to: 5 }, duration: 60, yoyo: true, repeat: 7, onComplete: () => m.setAngle(0) });
+        this.tweens.add({ targets: eyeWhite, scaleX: 1.25, scaleY: 1.25, duration: 300, delay: 300, yoyo: true });
+        const cap = this.add.image(360, cy + 160, 'cap_black').setDepth(2950).setScale(0.3);
+        this.time.delayedCall(600, () => {
+          sfx.play('goton');
+          this.cameras.main.shake(200, 0.006);
+          this.tweens.chain({
+            targets: cap,
+            tweens: [
+              { y: cy + 120, scale: 1.4, duration: 300, ease: 'Back.easeOut' },
+              { angle: { from: -10, to: 10 }, duration: 50, yoyo: true, repeat: relic.rarity === 'common' ? 3 : 8 },
+            ],
+            onComplete: () => {
+              sfx.play('paka', { rate: relic.rarity === 'common' ? 1 : 0.8 });
+              this.sparks.setParticleTint(relic.rarity === 'boss' ? PAL.blood : relic.rarity === 'rare' ? PAL.mustard : PAL.paper);
+              this.sparks.explode(relic.rarity === 'common' ? 16 : 34, 360, cy + 120);
+              cap.destroy();
+              root.destroy();
+              const head = { common: '縁起物が出た！', rare: '上物が出た！', boss: '…訳ありが出た' }[relic.rarity];
+              showRelicPicker(this, {
+                heading: head,
+                sub: '持っていくかどうか決める',
+                relics: [relic],
+                onDone: (r) => {
+                  if (r) addRelic(s, r.id);
+                  this.machine.setInputEnabled(true);
+                  this.refreshUI();
+                  save();
+                },
+              });
+            },
+          });
+        });
+      },
+      onDenied: () => toast(this, blocked ?? '', cy + 520),
+    });
+    turn.setEnabled(!blocked);
+    const back = new Button(this, 360, cy + 500, { w: 260, h: 78, color: PAL.plum, label: '戻る', size: 28, onPress: close });
+    root.add([turn, back]);
+    root.setAlpha(0);
+    this.tweens.add({ targets: root, alpha: 1, duration: 180 });
+    m.setY(cy + 120).setScale(0.7);
+    this.tweens.add({ targets: m, y: cy, scale: 1, duration: 360, ease: 'Back.easeOut' });
   }
 
   /** 黒いカプセル：封じられたカプセルが出て、縁起物を 3 つから 1 つ選べる */

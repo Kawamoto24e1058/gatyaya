@@ -1,4 +1,4 @@
-// 縁起物を 3 つから 1 つ選ぶ画面（黒いカプセル・返済後の取り立て屋で共用）
+// 縁起物を 3 つから 1 つ選ぶ画面（黒いカプセル・返済後の取り立て屋・バイト・縁起物ガチャで共用）
 import Phaser from 'phaser';
 import { CSS, GAME_H, GAME_W, PAL } from '../config';
 import { sfx } from '../core/audio';
@@ -20,7 +20,8 @@ export function showRelicPicker(
 
   let selected: Relic | null = null;
   const plates: Phaser.GameObjects.Container[] = [];
-  const confirm = new Button(scene, 360, top + 3 * 170 + 70, {
+  const rows = Math.max(1, opts.relics.length);
+  const confirm = new Button(scene, 360, top + rows * 170 + 70, {
     w: 360,
     h: 96,
     color: PAL.moss,
@@ -29,7 +30,7 @@ export function showRelicPicker(
     onPress: () => close(selected),
     onDenied: () => undefined,
   }).setEnabled(false);
-  const skip = new Button(scene, 360, top + 3 * 170 + 180, { w: 260, h: 70, color: PAL.plum, label: 'いらない', size: 24, onPress: () => close(null) });
+  const skip = new Button(scene, 360, top + rows * 170 + 180, { w: 260, h: 70, color: PAL.plum, label: 'いらない', size: 24, onPress: () => close(null) });
 
   opts.relics.forEach((r, i) => {
     const y = top + 80 + i * 170;
@@ -58,6 +59,12 @@ export function showRelicPicker(
     root.add(c);
   });
   root.add([confirm, skip]);
+  // 1 つだけなら最初から選んだ状態にする（縁起物ガチャ）
+  if (opts.relics.length === 1) {
+    selected = opts.relics[0];
+    confirm.setEnabled(true).setLabel('持っていく');
+    skip.setLabel('置いていく');
+  }
 
   const close = (r: Relic | null) => {
     if (r) {

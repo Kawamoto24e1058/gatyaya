@@ -50,6 +50,10 @@ export type GameState = {
   market: MarketState;
   events: EventState;
   relics: string[];
+  /** 縁起物ガチャを最後に回した日（1 日 1 回） */
+  relicGachaDay: number;
+  /** 今週、縁起物ガチャを回した回数（回すたびに値段が倍） */
+  relicGachaWeek: number;
   today: DayStats;
   totals: { pulls: number; sales: number; transforms: number; bestRarity: Rarity | null };
   /** 昨夜化けたカプセル（瓶の並び順のインデックス）。朝の演出に使う */
@@ -88,6 +92,8 @@ export function newGame(): GameState {
     market: initMarket(),
     events: initEvents(),
     relics: [],
+    relicGachaDay: 0,
+    relicGachaWeek: 0,
     today: freshDay(BALANCE.startCoins),
     totals: { pulls: 0, sales: 0, transforms: 0, bestRarity: null },
     nightChanges: [],
@@ -179,6 +185,7 @@ export function payDebt(s: GameState): boolean {
   s.quota = Math.round(s.quota * BALANCE.quotaGrowth) + carry;
   s.jarBonusWeek = 0;
   s.sellBonusWeek = 0;
+  s.relicGachaWeek = 0;
   return true;
 }
 
@@ -236,6 +243,8 @@ export function loadSave(): GameState | null {
     s.apBonusTomorrow ??= 0;
     s.lastBaito ??= '';
     s.baitoBoard ??= [];
+    s.relicGachaDay ??= 0;
+    s.relicGachaWeek ??= 0;
     s.events ??= initEvents();
     s.jarShiny ??= s.jar.map(() => false);
     s.today.shuffles ??= 0;
