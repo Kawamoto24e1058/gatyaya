@@ -1,11 +1,34 @@
 // 景品はすべて架空のシリーズ。実在の商品名・ブランド・キャラクターは使わない。
 import { RARITY_INFO, type Rarity } from './rarity';
 
+/** グッズの種類。同じ絵柄でも形が違う */
+export type PrizeKind = 'badge' | 'sticker' | 'keychain' | 'acrylic' | 'plush' | 'figure' | 'holo';
+
+export const KIND_LABEL: Record<PrizeKind, string> = {
+  badge: '缶バッジ',
+  sticker: 'シール',
+  keychain: 'キーホルダー',
+  acrylic: 'アクスタ',
+  plush: 'ぬいぐるみ',
+  figure: 'フィギュア',
+  holo: 'ホロカード',
+};
+
+// レア度が上がるほど“いいモノ”になる
+const KINDS_BY_RARITY: Record<Rarity, PrizeKind[]> = {
+  N: ['badge', 'sticker', 'keychain'],
+  R: ['keychain', 'acrylic', 'plush'],
+  SR: ['acrylic', 'plush', 'figure'],
+  SSR: ['figure', 'holo'],
+  UR: ['figure', 'holo'],
+};
+
 export type Prize = {
   id: string;
   name: string;
   seriesId: string;
   rarity: Rarity;
+  kind: PrizeKind;
   basePrice: number;
 };
 
@@ -49,13 +72,14 @@ const NAMES: Record<string, Record<Rarity, [string, string]>> = {
 // シリーズごとの価格の癖（TODO(balance)）
 const SERIES_PRICE_BIAS: Record<string, number> = { mochi: 1.0, neji: 1.1, obake: 0.9 };
 
-export const PRIZES: Prize[] = SERIES.flatMap((s) =>
+export const PRIZES: Prize[] = SERIES.flatMap((s, si) =>
   (Object.keys(NAMES[s.id]) as Rarity[]).flatMap((r) =>
     NAMES[s.id][r].map((name, k) => ({
       id: `${s.id}_${r}_${k}`,
       name,
       seriesId: s.id,
       rarity: r,
+      kind: KINDS_BY_RARITY[r][(si + k) % KINDS_BY_RARITY[r].length],
       basePrice: Math.round(RARITY_INFO[r].basePrice * SERIES_PRICE_BIAS[s.id] * (k === 0 ? 0.9 : 1.1)),
     })),
   ),

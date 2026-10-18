@@ -96,7 +96,7 @@ export class CloseScene extends Phaser.Scene {
     paper.add(txt(this, -W / 2 + 36, lineY(4) + 30, '所持コイン', 26, { originX: 0, color: CSS.inkSoft }));
     const coinT = txt(this, W / 2 - 36, lineY(4) + 30, '', 34, { originX: 1, color: '#c08a1a' });
     paper.add(coinT);
-    paper.add(txt(this, -W / 2 + 36, lineY(5) + 30, `開封 ${d.opened} ・ 合体 ${d.merges}`, 22, { originX: 0, color: CSS.inkSoft, bold: false }));
+    paper.add(txt(this, -W / 2 + 36, lineY(5) + 30, `開封 ${d.opened} ・ 朝に化けた ${d.transforms}`, 22, { originX: 0, color: CSS.inkSoft, bold: false }));
 
     // 印字アニメーション
     const paperY = Math.max(GAME_H * 0.14, 150);

@@ -1,15 +1,13 @@
 // 外部画像は使わず、起動時に Canvas でテクスチャを生成する。
 import Phaser from 'phaser';
 import { GAME_H, GAME_W } from '../config';
-import { PRIZES, SERIES } from '../data/prizes';
+import { PRIZES } from '../data/prizes';
 import { RARITIES, RARITY_INFO, type Rarity } from '../data/rarity';
-import { drawPrizeArt, INK, inkStroke, paintDuskBg, rr } from './art';
+import { INK, inkStroke, paintDuskBg, rr } from './art';
+import { drawItem, ITEM_H, ITEM_W } from './items';
 
 export const capsuleKey = (r: Rarity) => `cap_${r}`;
-export const artKey = (prizeId: string) => `art_${prizeId}`;
-export const cardKey = (r: Rarity, seriesId: string) => `card_${r}_${seriesId}`;
-export const CARD_W = 240;
-export const CARD_H = 336;
+export const itemKey = (prizeId: string) => `item_${prizeId}`;
 
 type C = CanvasRenderingContext2D;
 
@@ -93,67 +91,6 @@ function drawCapsule(c: C, cx: number, cy: number, r: number, rarity: Rarity) {
   }
 }
 
-/** トレカの枠（レア度で枠の色、シリーズで絵の背景色） */
-function drawCardFrame(c: C, r: Rarity, seriesColor: string) {
-  const info = RARITY_INFO[r];
-  const W = CARD_W;
-  const H = CARD_H;
-  rr(c, 4, 4, W - 8, H - 8, 18);
-  if (r === 'UR') c.fillStyle = holoGradient(c, 0, 0, W, H);
-  else if (r === 'SSR') {
-    const g = c.createLinearGradient(0, 0, W, H);
-    g.addColorStop(0, '#f6dd8a');
-    g.addColorStop(0.5, '#d9a23a');
-    g.addColorStop(1, '#f2cf72');
-    c.fillStyle = g;
-  } else c.fillStyle = info.css;
-  c.fill();
-  inkStroke(c, 6);
-  // 絵の窓
-  rr(c, 18, 44, W - 36, 172, 10);
-  const bg = c.createLinearGradient(0, 44, 0, 216);
-  bg.addColorStop(0, seriesColor);
-  bg.addColorStop(1, '#2c1b2e');
-  c.fillStyle = bg;
-  c.fill();
-  c.save();
-  c.clip();
-  // 背景の放射線（集中線）
-  c.translate(W / 2, 130);
-  c.fillStyle = 'rgba(255,255,255,0.12)';
-  for (let i = 0; i < 14; i++) {
-    c.beginPath();
-    c.moveTo(0, 0);
-    c.arc(0, 0, 200, (i / 14) * Math.PI * 2, (i / 14) * Math.PI * 2 + 0.18);
-    c.closePath();
-    c.fill();
-  }
-  c.restore();
-  rr(c, 18, 44, W - 36, 172, 10);
-  inkStroke(c, 4);
-  // 名前の欄
-  rr(c, 18, 226, W - 36, 62, 8);
-  c.fillStyle = '#f6ead2';
-  c.fill();
-  inkStroke(c, 3.5);
-  // 星（レア度）
-  const n = info.index + 1;
-  for (let i = 0; i < n; i++) {
-    const x = W / 2 + (i - (n - 1) / 2) * 26;
-    const y = 308;
-    c.beginPath();
-    for (let k = 0; k < 10; k++) {
-      const a = -Math.PI / 2 + (k * Math.PI) / 5;
-      const rad = k % 2 === 0 ? 11 : 5;
-      c.lineTo(x + Math.cos(a) * rad, y + Math.sin(a) * rad);
-    }
-    c.closePath();
-    c.fillStyle = '#f2c94c';
-    c.fill();
-    inkStroke(c, 2.5);
-  }
-}
-
 function icon(scene: Phaser.Scene, key: string, draw: (c: C) => void) {
   canvasTex(scene, key, 72, 72, (c) => {
     c.translate(36, 36);
@@ -168,8 +105,7 @@ export function makeTextures(scene: Phaser.Scene): void {
     canvasTex(scene, capsuleKey(r), size, size, (c) => drawCapsule(c, size / 2, size / 2, rad, r));
   }
 
-  for (const p of PRIZES) canvasTex(scene, artKey(p.id), 160, 160, (c) => drawPrizeArt(c, p));
-  for (const r of RARITIES) for (const se of SERIES) canvasTex(scene, cardKey(r, se.id), CARD_W, CARD_H, (c) => drawCardFrame(c, r, se.color));
+  for (const p of PRIZES) canvasTex(scene, itemKey(p.id), ITEM_W, ITEM_H, (c) => drawItem(c, p));
 
   canvasTex(scene, 'dot', 16, 16, (c) => {
     const g = c.createRadialGradient(8, 8, 0, 8, 8, 8);
@@ -354,47 +290,6 @@ export function makeTextures(scene: Phaser.Scene): void {
     c.fillStyle = 'rgba(255,255,255,0.6)';
     c.beginPath();
     c.ellipse(14, 13, 5, 3, -0.6, 0, Math.PI * 2);
-    c.fill();
-  });
-
-  // トレカの裏面
-  canvasTex(scene, 'card_back', 240, 336, (c) => {
-    rr(c, 4, 4, 232, 328, 18);
-    c.fillStyle = '#3b2440';
-    c.fill();
-    c.save();
-    c.clip();
-    c.strokeStyle = 'rgba(232,177,58,0.25)';
-    c.lineWidth = 3;
-    for (let i = -340; i < 340; i += 22) {
-      c.beginPath();
-      c.moveTo(i, 0);
-      c.lineTo(i + 340, 340);
-      c.stroke();
-    }
-    c.restore();
-    rr(c, 4, 4, 232, 328, 18);
-    inkStroke(c, 6);
-    rr(c, 18, 18, 204, 300, 12);
-    c.strokeStyle = '#e8b13a';
-    c.lineWidth = 3;
-    c.stroke();
-    // 中央の目の紋
-    c.beginPath();
-    c.moveTo(60, 168);
-    c.quadraticCurveTo(120, 118, 180, 168);
-    c.quadraticCurveTo(120, 218, 60, 168);
-    c.fillStyle = '#f6ead2';
-    c.fill();
-    inkStroke(c, 5);
-    c.beginPath();
-    c.arc(120, 168, 20, 0, Math.PI * 2);
-    c.fillStyle = '#d94b3d';
-    c.fill();
-    inkStroke(c, 4);
-    c.beginPath();
-    c.arc(120, 168, 8, 0, Math.PI * 2);
-    c.fillStyle = INK;
     c.fill();
   });
 

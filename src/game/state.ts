@@ -1,6 +1,6 @@
 // ゲーム状態と保存。Phase 1〜3 は localStorage（必ず try/catch）。
 import { BALANCE } from '../config';
-import type { Rarity } from '../data/rarity';
+import { nextRarity, RARITY_INFO, type Rarity } from '../data/rarity';
 import { advanceMarketDay, initMarket, migrateMarket, type MarketState } from './market';
 import { runHook } from './relics';
 
@@ -9,7 +9,8 @@ export type DayStats = {
   gachaSpent: number;
   sales: number;
   wages: number;
-  merges: number;
+  /** 夜のうちに化けたカプセル数（その日の朝） */
+  transforms: number;
   opened: number;
   coinsAtStart: number;
 };
@@ -32,7 +33,9 @@ export type GameState = {
   market: MarketState;
   relics: string[];
   today: DayStats;
-  totals: { pulls: number; sales: number; merges: number; bestRarity: Rarity | null };
+  totals: { pulls: number; sales: number; transforms: number; bestRarity: Rarity | null };
+  /** 昨夜化けたカプセル（瓶の並び順のインデックス）。朝の演出に使う */
+  nightChanges: number[];
   /** 朝のバナーをまだ出していない */
   pendingMorning: boolean;
 };
@@ -41,7 +44,7 @@ const SAVE_KEY = 'gatyaya.save.v1';
 const MUTE_KEY = 'gatyaya.mute';
 
 function freshDay(coins: number): DayStats {
-  return { pulls: 0, gachaSpent: 0, sales: 0, wages: 0, merges: 0, opened: 0, coinsAtStart: coins };
+  return { pulls: 0, gachaSpent: 0, sales: 0, wages: 0, transforms: 0, opened: 0, coinsAtStart: coins };
 }
 
 export function newGame(): GameState {
@@ -61,7 +64,8 @@ export function newGame(): GameState {
     market: initMarket(),
     relics: [],
     today: freshDay(BALANCE.startCoins),
-    totals: { pulls: 0, sales: 0, merges: 0, bestRarity: null },
+    totals: { pulls: 0, sales: 0, transforms: 0, bestRarity: null },
+    nightChanges: [],
     pendingMorning: true,
   };
 }
@@ -103,8 +107,27 @@ export function advanceDay(s: GameState): void {
   s.ap = s.apMax;
   advanceMarketDay(s.market, s.day);
   s.today = freshDay(s.coins);
+  nightTransform(s);
   s.pendingMorning = true;
   // TODO(Phase 2): 噂（掲示板）・イベントの抽選
+}
+
+// TODO(balance): 夜に化ける確率（上位ほど起きにくい）
+const NIGHT_CHANCE: Record<Rarity, number> = { N: 0.06, R: 0.05, SR: 0.03, SSR: 0.015, UR: 0 };
+
+/** 開けずに瓶へ残したカプセルが、夜のうちに付喪神になって 1 段階上がる */
+function nightTransform(s: GameState): void {
+  s.nightChanges = [];
+  s.jar.forEach((r, i) => {
+    const next = nextRarity(r);
+    const chance = runHook(s, 'onNight', NIGHT_CHANCE[r], { rarity: r });
+    if (!next || Math.random() >= chance) return;
+    s.jar[i] = next;
+    s.nightChanges.push(i);
+    s.today.transforms += 1;
+    s.totals.transforms += 1;
+    if (!s.totals.bestRarity || RARITY_INFO[next].index > RARITY_INFO[s.totals.bestRarity].index) s.totals.bestRarity = next;
+  });
 }
 
 /** 返済。成功なら true */
@@ -156,6 +179,10 @@ export function loadSave(): GameState | null {
     const s = JSON.parse(raw) as GameState;
     if (s.version !== 1) return null;
     migrateMarket(s.market, s.day);
+    // 合体廃止前のセーブを補う
+    s.nightChanges ??= [];
+    s.today.transforms ??= 0;
+    s.totals.transforms ??= 0;
     return s;
   } catch {
     return null;

@@ -10,11 +10,11 @@ import { RARITY_INFO } from '../data/rarity';
 import { estimateSellTotal, saturationOf, sellOne, sellPrice, trendSign, type SeriesMarket } from '../game/market';
 import { S, save } from '../game/state';
 import { Hud } from '../ui/Hud';
-import { CARD_H, CARD_W, makePrizeCard, shine } from '../ui/PrizeCard';
+import { ITEM_Y, makePrizeView, twinkle, VIEW_H, VIEW_W } from '../ui/PrizeView';
 import { Button, drawPlate, floatText, txt } from '../ui/widgets';
 
 const COLS = 3;
-const CARD_SCALE = 0.62;
+const VIEW_SCALE = 0.62;
 const GAP = 14;
 
 /** 黒板に描くチョーク風の矢印・炎 */
@@ -167,8 +167,8 @@ export class MarketScene extends Phaser.Scene {
     g.fillStyle(0x1a1020, 1);
     g.fillRoundedRect(36, top + 14, 648, bottom - top - 28, 10);
     // 棚板
-    const cellW = CARD_W * CARD_SCALE;
-    const cellH = CARD_H * CARD_SCALE + 26;
+    const cellW = VIEW_W * VIEW_SCALE;
+    const cellH = VIEW_H * VIEW_SCALE + 30;
     const x0 = (GAME_W - (COLS * cellW + (COLS - 1) * GAP)) / 2;
     this.area = { top: top + 20, bottom: bottom - 20, x0, cellW, cellH };
     txt(this, 360, top - 2, '在庫', 24, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 5 }).setDepth(5);
@@ -212,18 +212,18 @@ export class MarketScene extends Phaser.Scene {
       const col = i % COLS;
       const row = Math.floor(i / COLS);
       const cx = A.x0 + col * (A.cellW + GAP) + A.cellW / 2;
-      const cy = row * A.cellH + (CARD_H * CARD_SCALE) / 2 + 8;
+      const cy = row * A.cellH + (-ITEM_Y + 110) * VIEW_SCALE + 8;
       // 棚板
       if (col === 0) {
         const shelf = this.add.graphics();
         shelf.fillStyle(PAL.wood, 1);
-        shelf.fillRect(36, cy + (CARD_H * CARD_SCALE) / 2 + 2, 648, 10);
+        shelf.fillRect(36, cy + (ITEM_Y + 104) * VIEW_SCALE, 648, 10);
         shelf.fillStyle(PAL.ink, 1);
-        shelf.fillRect(36, cy + (CARD_H * CARD_SCALE) / 2 + 12, 648, 3);
+        shelf.fillRect(36, cy + (ITEM_Y + 104) * VIEW_SCALE + 10, 648, 3);
         this.list.add(shelf);
       }
-      const card = makePrizeCard(this, p, { count: s.inventory[id] });
-      card.setPosition(cx, cy).setScale(CARD_SCALE).setAngle(((i * 37) % 5) - 2);
+      const card = makePrizeView(this, p, { count: s.inventory[id] });
+      card.setPosition(cx, cy).setScale(VIEW_SCALE);
       this.list.add(card);
       // 値動きの小札（シリーズ単位の矢印）
       const sm = s.market.series[p.seriesId];
@@ -231,7 +231,7 @@ export class MarketScene extends Phaser.Scene {
       const mark = sm.mode === 'boom' ? '🔥' : sign === 'up' ? '↑' : sign === 'down' ? '↓' : '→';
       const tagColor = sm.mode === 'boom' ? PAL.mustard : sign === 'up' ? PAL.moss : sign === 'down' ? PAL.vermilion : 0x8a7f9a;
       const tg = this.add.graphics();
-      const ty = cy + (CARD_H * CARD_SCALE) / 2 - 34;
+      const ty = cy + (ITEM_Y - 110) * VIEW_SCALE;
       drawPlate(tg, cx - A.cellW / 2 - 4, ty, 46, 38, tagColor, { radius: 8, shadow: 3, outline: 3, shine: false });
       this.list.add(tg);
       this.list.add(txt(this, cx - A.cellW / 2 + 19, ty + 19, mark, 24, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 4 }));
@@ -305,7 +305,7 @@ export class MarketScene extends Phaser.Scene {
 
     const midY = GAME_H / 2;
     // 大きなカード
-    const card = makePrizeCard(this, p, { count: have });
+    const card = makePrizeView(this, p, { count: have });
     card.setPosition(360, midY - 260).setScale(0.95);
     c.add(card);
 
@@ -354,7 +354,7 @@ export class MarketScene extends Phaser.Scene {
       c.setAlpha(0);
       this.tweens.add({ targets: c, alpha: 1, duration: 140 });
     }
-    if (RARITY_INFO[p.rarity].index >= 2) this.time.delayedCall(280, () => card.active && shine(this, card));
+    twinkle(this, card, RARITY_INFO[p.rarity].index);
     this.detail = c;
     this.detailId = id;
   }

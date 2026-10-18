@@ -41,7 +41,7 @@ export class GameOverScene extends Phaser.Scene {
     const rows: [string, string][] = [
       ['到達', `第${s.week}週 ${s.day}日目`],
       ['ガチャ回数', `${s.totals.pulls}回`],
-      ['合体回数', `${s.totals.merges}回`],
+      ['化けた回数', `${s.totals.transforms}回`],
       ['総売上', fmt(s.totals.sales)],
       ['最高レア', s.totals.bestRarity ?? '-'],
     ];
