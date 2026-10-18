@@ -11,6 +11,7 @@ import { RARITIES, type Rarity } from '../src/data/rarity';
 import { canSell, sellOne, sellPrice } from '../src/game/market';
 import { paydayOffer, rollRelics, runHook } from '../src/game/relics';
 import { pullRelicGacha, relicGachaPrice } from '../src/game/relicGacha';
+import { buyUpgrade, nextUpgradeCost, upAttract, upBaitoMult, upTwinChance, UPGRADES } from '../src/game/upgrades';
 import { addRelic, advanceDay, jarCapacity, newGame, payDebt, pullCost, sellApCost, type GameState } from '../src/game/state';
 
 const USE_RELICS = process.env.RELICS !== '0';
@@ -41,6 +42,7 @@ type Strategy = {
 };
 
 const GACHA_RELICS = process.env.RGACHA !== '0';
+const USE_UPGRADES = process.env.UPG !== '0';
 
 function pull(s: GameState) {
   const cost = pullCost(s, machine.cost);
@@ -58,13 +60,18 @@ function pull(s: GameState) {
   }
   s.jar.push(runHook(s, 'onGachaRoll', weightedPick(machine.rarityWeights)));
   s.jarShiny.push(false);
+  // 改装「おまけ玉」
+  if (Math.random() < upTwinChance(s) && s.jar.length < jarCapacity(s)) {
+    s.jar.push(runHook(s, 'onGachaRoll', weightedPick(machine.rarityWeights)));
+    s.jarShiny.push(false);
+  }
 }
 
 /** 瓶の中で同色 3 つが合成される（近似） */
 function fuseJar(s: GameState) {
   for (const r of RARITIES) {
     let idx = s.jar.map((x, i) => (x === r && !s.jarShiny[i] ? i : -1)).filter((i) => i >= 0);
-    while (idx.length >= BALANCE.fuseMin && Math.random() < FUSE_RATE) {
+    while (idx.length >= BALANCE.fuseMin && Math.random() < Math.min(0.95, FUSE_RATE + upAttract(s) * 0.06)) {
       const take = idx.slice(0, BALANCE.fuseMin);
       // 後ろから消して 1 つを色違いとして残す
       for (const i of take.slice(1).sort((a, b) => b - a)) {
@@ -114,7 +121,7 @@ function playDay(s: GameState, st: Strategy): void {
   const daysLeft = (BALANCE.daysPerWeek - (s.day % BALANCE.daysPerWeek)) % BALANCE.daysPerWeek;
   for (let i = 0; i < 2 && s.ap >= BALANCE.apCost.baito; i++) {
     s.ap -= BALANCE.apCost.baito;
-    s.coins += runHook(s, 'onBaito', baitoCoins());
+    s.coins += Math.round(runHook(s, 'onBaito', baitoCoins()) * upBaitoMult(s));
     if (Math.random() < BAITO_BONUS_RATE) s.jarBonusWeek += 1;
   }
   const payday = daysLeft === 0;
@@ -137,6 +144,16 @@ function playDay(s: GameState, st: Strategy): void {
     sellWhere(s, (k) => st.shouldSell(s, k, daysLeft));
   }
   pullAll(s, payday ? s.quota : 0);
+  // 夜の改装：返済に必要な分を残して、安いものから買う
+  if (USE_UPGRADES && !payday) {
+    const keep = s.quota * (daysLeft <= 2 ? 1 : 0.5);
+    for (;;) {
+      const cands = UPGRADES.map((u) => ({ id: u.id, cost: nextUpgradeCost(s, u.id) })).filter((c) => c.cost !== null && s.coins - c.cost >= keep);
+      if (cands.length === 0) break;
+      cands.sort((a, b) => a.cost! - b.cost!);
+      buyUpgrade(s, cands[0].id);
+    }
+  }
 }
 
 function runOnce(st: Strategy): { weeks: number; coinsAtPayday: number[] } {

@@ -5,6 +5,7 @@ import { sfx } from '../core/audio';
 import { fmt } from '../core/util';
 import { rollRelics, runHook } from '../game/relics';
 import { addRelic, S, save } from '../game/state';
+import { upBaitoMult } from '../game/upgrades';
 import { MINIGAME_BY_ID, pickBoard } from '../minigames/registry';
 import { applyReward, rewardLabel, type MiniGame, type MiniGameDef } from '../minigames/types';
 import { Hud } from '../ui/Hud';
@@ -182,7 +183,7 @@ export class BaitoScene extends Phaser.Scene {
     this.game_.destroy?.();
     const s = S();
     // 縁起物でバイト代が増減する
-    result.coins = runHook(s, 'onBaito', result.coins);
+    result.coins = Math.round(runHook(s, 'onBaito', result.coins) * upBaitoMult(s));
     s.coins += result.coins;
     s.today.wages += result.coins;
     // 縁起物が出たが、もう全部持っている場合はお金に替える

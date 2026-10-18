@@ -4,6 +4,7 @@ import { nextRarity, RARITY_INFO, type Rarity } from '../data/rarity';
 import { advanceEvents, initEvents, type EventState } from './events';
 import { advanceMarketDay, initMarket, migrateMarket, type MarketState } from './market';
 import { runHook } from './relics';
+import { upApBonus, upFreeStall, upJarBonus } from './upgrades';
 
 export type DayStats = {
   pulls: number;
@@ -54,6 +55,8 @@ export type GameState = {
   relicGachaDay: number;
   /** 今週、縁起物ガチャを回した回数（回すたびに値段が倍） */
   relicGachaWeek: number;
+  /** 店の改装のレベル（id → レベル） */
+  upgrades: Record<string, number>;
   today: DayStats;
   totals: { pulls: number; sales: number; transforms: number; bestRarity: Rarity | null };
   /** 昨夜化けたカプセル（瓶の並び順のインデックス）。朝の演出に使う */
@@ -94,6 +97,7 @@ export function newGame(): GameState {
     relics: [],
     relicGachaDay: 0,
     relicGachaWeek: 0,
+    upgrades: {},
     today: freshDay(BALANCE.startCoins),
     totals: { pulls: 0, sales: 0, transforms: 0, bestRarity: null },
     nightChanges: [],
@@ -115,12 +119,12 @@ export function setState(s: GameState): void {
 }
 
 export function jarCapacity(s: GameState): number {
-  return runHook(s, 'onJarCapacity', s.jarCapacityBase + s.jarBonusWeek);
+  return runHook(s, 'onJarCapacity', s.jarCapacityBase + s.jarBonusWeek + upJarBonus(s));
 }
 
 /** 縁起物を反映した値 */
 export const pullCost = (s: GameState, base: number) => runHook(s, 'onPullCost', base);
-export const sellApCost = (s: GameState) => runHook(s, 'onSellApCost', BALANCE.apCost.sell);
+export const sellApCost = (s: GameState) => (upFreeStall(s) ? 0 : runHook(s, 'onSellApCost', BALANCE.apCost.sell));
 
 /** 今週の返済額（縁起物で減ることがある） */
 export function dueAmount(s: GameState): number {
@@ -143,7 +147,7 @@ export function isPayday(s: GameState): boolean {
 /** 閉店後に翌日へ進める（返済処理は PaydayScene 側で先に済ませる） */
 export function advanceDay(s: GameState): void {
   s.day += 1;
-  s.apMax = runHook(s, 'onDayStart', BALANCE.apPerDay);
+  s.apMax = runHook(s, 'onDayStart', BALANCE.apPerDay) + upApBonus(s);
   s.apMax += s.apBonusTomorrow;
   s.ap = s.apMax;
   s.apBonusTomorrow = 0;
@@ -245,6 +249,7 @@ export function loadSave(): GameState | null {
     s.baitoBoard ??= [];
     s.relicGachaDay ??= 0;
     s.relicGachaWeek ??= 0;
+    s.upgrades ??= {};
     s.events ??= initEvents();
     s.jarShiny ??= s.jar.map(() => false);
     s.today.shuffles ??= 0;

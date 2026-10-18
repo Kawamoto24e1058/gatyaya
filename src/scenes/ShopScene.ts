@@ -8,8 +8,10 @@ import { KIND_LABEL, prizesOf, SERIES, stockKey, type Prize } from '../data/priz
 import { RARITY_INFO, type Rarity } from '../data/rarity';
 import { Capsule } from '../game/Capsule';
 import { adjustedSeriesWeights } from '../game/events';
+import { planFusion } from '../game/fusion';
 import { RELIC_BY_ID, rollRelics, runHook } from '../game/relics';
 import { pullRelicGacha, RELIC_GACHA, relicGachaBlocked, relicGachaPrice } from '../game/relicGacha';
+import { upAttract, upStirInterval, upTwinChance } from '../game/upgrades';
 import { showKawaraban } from '../ui/Kawaraban';
 import { Coach } from '../ui/Coach';
 import { tilt } from '../core/tilt';
@@ -75,6 +77,7 @@ export class ShopScene extends Phaser.Scene {
   private lastShuffleAt = 0;
   private keys?: Phaser.Types.Input.Keyboard.CursorKeys;
   private shelfKey: string | null = null;
+  private nextStirAt = 0;
   private clusterSince = new Map<Capsule, number>();
   private lastClusterCheck = 0;
   private btnShuffle!: Button;
@@ -354,6 +357,19 @@ export class ShopScene extends Phaser.Scene {
     this.tweens.add({ targets: c, scale: 1, duration: 220, ease: 'Back.easeOut' });
     this.noteBest(rarity);
     this.rareDispenseFx(rarity, out.x, out.y);
+    // 改装「おまけ玉の仕掛け」：ときどきもう 1 個出る（代金なし）
+    if (Math.random() < upTwinChance(s)) {
+      this.time.delayedCall(260, () => {
+        if (this.capsules.length + this.restoreQueue.length >= jarCapacity(s)) return;
+        const r2 = runHook(s, 'onGachaRoll', weightedPick(this.def.rarityWeights), { machineId: this.def.id });
+        this.spawnCapsule(out.x + Phaser.Math.Between(-6, 6), out.y, r2, Phaser.Math.FloatBetween(-1.4, 1.4), 3);
+        this.noteBest(r2);
+        sfx.play('goton', { rate: 1.3, vol: 0.7 });
+        floatText(this, out.x + 110, out.y - 20, 'おまけ玉！', CSS.gold, 26);
+        this.refreshUI();
+        save();
+      });
+    }
     this.tutorial('pulled');
     this.refreshUI();
     save();
@@ -465,53 +481,48 @@ export class ShopScene extends Phaser.Scene {
     }
   }
 
-  /** くっついたカプセルを 1 つの色違いカプセルにまとめる（レア度は上がらない） */
+  /**
+   * くっついた同色カプセルを、3 つごとに 1 つの色違いカプセルにまとめる（レア度は上がらない）。
+   * 4〜5 個なら 3 つだけ使い、余りは瓶に残す（つなげすぎて損をしないように）。6 個なら色違い 2 つ。
+   */
   private fuse(chain: Capsule[]) {
     const s = S();
-    // まとまる先は群れの中心にいちばん近いカプセル
-    const mx = chain.reduce((a, c) => a + c.x, 0) / chain.length;
-    const my = chain.reduce((a, c) => a + c.y, 0) / chain.length;
-    const target = chain.reduce((best, c) => (Phaser.Math.Distance.Between(c.x, c.y, mx, my) < Phaser.Math.Distance.Between(best.x, best.y, mx, my) ? c : best));
+    const groups = planFusion(chain, BALANCE.fuseMin);
+    if (groups.length === 0) return;
+    const sets = groups.length;
+    const used = groups.flat();
     for (const c of chain) {
       this.clusterSince.delete(c);
       c.setMarked(false);
     }
-    const { x, y } = target;
-    const r = target.rarity;
-    for (const c of chain) {
+    const r = used[0].rarity;
+    const info = RARITY_INFO[r];
+    for (const c of used) {
       c.busy = true;
       c.setStatic(true);
     }
-    for (const c of chain) {
-      if (c !== target) this.tweens.add({ targets: c, x, y, duration: 180, ease: 'Quad.easeIn' });
-    }
+    for (const g of groups) for (const c of g.slice(1)) this.tweens.add({ targets: c, x: g[0].x, y: g[0].y, duration: 180, ease: 'Quad.easeIn' });
     sfx.play('whoosh', { rate: 1.4 });
     this.time.delayedCall(200, () => {
-      for (const c of chain) this.removeCapsule(c);
-      const nc = this.spawnCapsule(x, y, r, 0, -6, true);
-      nc.setScale(0.5);
-      this.tweens.add({ targets: nc, scale: 1, duration: 300, ease: 'Back.easeOut' });
-      const info = RARITY_INFO[r];
+      groups.forEach((g, gi) => {
+        const { x, y } = g[0];
+        for (const c of g) this.removeCapsule(c);
+        const nc = this.spawnCapsule(x, y, r, 0, -6, true);
+        nc.setScale(0.5);
+        this.tweens.add({ targets: nc, scale: 1, duration: 300, ease: 'Back.easeOut', delay: gi * 80 });
+        const ring = this.add.image(x, y, 'ring').setTint(PAL.mustard).setDepth(300).setScale((info.radius * 2) / 128);
+        this.tweens.add({ targets: ring, scale: (info.radius * 2 * 3) / 128, alpha: 0, duration: 480, ease: 'Cubic.easeOut', onComplete: () => ring.destroy() });
+        this.sparks.setParticleTint(PAL.mustard);
+        this.sparks.explode(22, x, y);
+      });
       sfx.play('pop', { rate: 0.9 + info.index * 0.1 });
       sfx.play('sparkle', { delay: 0.05 });
       vibrate(20);
-      const ring = this.add.image(x, y, 'ring').setTint(PAL.mustard).setDepth(300).setScale((info.radius * 2) / 128);
-      this.tweens.add({ targets: ring, scale: (info.radius * 2 * 3) / 128, alpha: 0, duration: 480, ease: 'Cubic.easeOut', onComplete: () => ring.destroy() });
-      this.sparks.setParticleTint(PAL.mustard);
-      this.sparks.explode(16 + chain.length * 3, x, y);
+      const { x, y } = groups[0][0];
       const sx = Phaser.Math.Clamp(x, 170, GAME_W - 170);
       const sy = Phaser.Math.Clamp(y - 80, this.jar.top + 110, this.jar.bottom - 100);
-      stamp(this, sx, sy, chain.length > BALANCE.fuseMin ? `${chain.length}つ合成！ 色違い` : '3つそろって色違い！', 34, CSS.gold, { hold: 600, depth: 450 });
-      // 4 つ以上つないだらおまけのコイン
-      const extra = chain.length - BALANCE.fuseMin;
-      if (extra > 0) {
-        const bonus = extra * 5 * (info.index + 1); // TODO(balance)
-        s.coins += bonus;
-        sfx.play('coin', { delay: 0.15 });
-        const ct = this.hud.coinTarget();
-        floatText(this, ct.x + 120, ct.y + 30, `+${bonus}`, CSS.gold, 28);
-      }
-      s.today.fusions += 1;
+      stamp(this, sx, sy, sets > 1 ? `色違いが ${sets} つ！` : '3つそろって色違い！', 34, CSS.gold, { hold: 600, depth: 450 });
+      s.today.fusions += sets;
       this.refreshUI();
       save();
     });
@@ -537,6 +548,21 @@ export class ShopScene extends Phaser.Scene {
     save();
   }
 
+  /** 改装「自動かき混ぜ機」：瓶をときどき軽くまぜる */
+  private autoStir() {
+    const iv = upStirInterval(S());
+    if (iv <= 0 || this.capsules.length < 3) return;
+    const now = this.time.now;
+    if (this.nextStirAt === 0) this.nextStirAt = now + iv * 1000;
+    if (now < this.nextStirAt) return;
+    this.nextStirAt = now + iv * 1000;
+    sfx.play('knock', { rate: 1.4, vol: 0.35 });
+    for (const c of this.capsules) {
+      if (c.busy || !c.active) continue;
+      c.setVelocity(Phaser.Math.FloatBetween(-3, 3), Phaser.Math.FloatBetween(-6, -3));
+    }
+  }
+
   // ---------- 傾き・振る・磁石 ----------
 
   /** スマホを傾けた方向（PC は ← →）へ重力を傾ける。磁石の瓶があれば同じ色が引き寄せ合う */
@@ -546,7 +572,7 @@ export class ShopScene extends Phaser.Scene {
     else if (this.keys?.right.isDown) tx = 1;
     this.matter.world.setGravity(tx * 1.3, 1.6);
 
-    const pull = runHook(S(), 'onAttract', BASE_ATTRACT);
+    const pull = runHook(S(), 'onAttract', BASE_ATTRACT + upAttract(S()));
     if (pull > 0) {
       const list = this.capsules.filter((c) => c.active && !c.busy && !c.shiny);
       for (let i = 0; i < list.length; i++) {
@@ -1236,6 +1262,7 @@ export class ShopScene extends Phaser.Scene {
 
   update() {
     this.applyTilt();
+    this.autoStir();
     this.checkClusters();
     this.coach?.update();
     for (const c of this.capsules) {

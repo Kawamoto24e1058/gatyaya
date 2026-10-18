@@ -4,6 +4,7 @@ import { BOTTOM, CSS, GAME_H, GAME_W, PAL } from '../config';
 import { sfx } from '../core/audio';
 import { fmt } from '../core/util';
 import { advanceDay, isPayday, S, saveNow } from '../game/state';
+import { showUpgradePanel } from '../ui/UpgradePanel';
 import { Button, countUp, stamp, title, txt } from '../ui/widgets';
 
 export class CloseScene extends Phaser.Scene {
@@ -143,6 +144,15 @@ export class CloseScene extends Phaser.Scene {
           this.scene.wake('Shop');
         }
       },
+    }).setDepth(50);
+    new Button(this, 360, BOTTOM - 210, {
+      w: 340,
+      h: 92,
+      color: PAL.wood,
+      label: '夜の改装',
+      sub: '店を強化する',
+      size: 30,
+      onPress: () => showUpgradePanel(this, () => undefined),
     }).setDepth(50);
   }
 }
