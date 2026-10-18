@@ -121,7 +121,7 @@ export class BubbleWrapGame implements MiniGame {
   }
 
   private sheetCoins() {
-    return 7;
+    return 4;
   }
 
   private onDown(p: Phaser.Input.Pointer) {
@@ -144,7 +144,7 @@ export class BubbleWrapGame implements MiniGame {
 
   onEnd(): { coins: number; bonus?: Reward; summary?: string } {
     this.detach();
-    const coins = this.sheets * this.sheetCoins() + Math.floor(this.popped / 10);
+    const coins = this.sheets * this.sheetCoins() + Math.floor(this.popped / 5);
     const bonus: Reward | undefined = this.sheets >= BONUS_SHEETS ? { kind: 'sellBonusWeek', amount: 0.05 } : undefined;
     return { coins, bonus, summary: `梱包 ${this.sheets} 箱 / つぶした ${this.popped} プチ` };
   }
