@@ -5,7 +5,7 @@ import { sfx } from '../core/audio';
 import { fmt } from '../core/util';
 import { runHook } from '../game/relics';
 import { S, save } from '../game/state';
-import { MINIGAME_BY_ID } from '../minigames/registry';
+import { MINIGAME_BY_ID, pickMiniGame } from '../minigames/registry';
 import { applyReward, rewardLabel, type MiniGame, type MiniGameDef } from '../minigames/types';
 import { Hud } from '../ui/Hud';
 import { Button, countUp, drawPlate, stamp, title, txt } from '../ui/widgets';
@@ -27,7 +27,10 @@ export class BaitoScene extends Phaser.Scene {
   }
 
   init(data: { id?: string }) {
-    this.def = MINIGAME_BY_ID[data.id ?? 'capsule-fill'];
+    // id 指定がなければ毎回くじ引き（前回と同じ仕事は避ける）。遊ぶまでは同じ募集のまま
+    const s = S();
+    this.def = (data?.id && MINIGAME_BY_ID[data.id]) || MINIGAME_BY_ID[s.nextBaito] || pickMiniGame(s.lastBaito);
+    s.nextBaito = this.def.id;
     this.game_ = null;
     this.playing = false;
   }
@@ -85,6 +88,8 @@ export class BaitoScene extends Phaser.Scene {
   private begin() {
     const s = S();
     s.ap -= BALANCE.apCost.baito;
+    s.lastBaito = this.def.id;
+    s.nextBaito = '';
     save();
     this.hud.refresh();
     const n = title(this, 360, M - 60, '3', 150, CSS.cream).setDepth(800);

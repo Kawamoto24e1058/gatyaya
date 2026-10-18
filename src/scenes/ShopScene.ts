@@ -11,9 +11,10 @@ import { adjustedSeriesWeights } from '../game/events';
 import { RELIC_BY_ID, rollRelics, runHook } from '../game/relics';
 import { showKawaraban } from '../ui/Kawaraban';
 import { Coach } from '../ui/Coach';
+import { tilt } from '../core/tilt';
 import { showRelicPicker } from '../ui/RelicPicker';
 import { omamoriKey } from '../ui/textures';
-import { addRelic, daysUntilPayday, dueAmount, inventoryCount, isPayday, jarCapacity, pullCost, S, save, saveNow, sellApCost, shufflesPerDay } from '../game/state';
+import { addRelic, daysUntilPayday, dueAmount, inventoryCount, isPayday, jarCapacity, pullCost, S, save, saveNow, sellApCost } from '../game/state';
 import { createMachineView, type MachineView } from '../machines/types';
 import '../machines/HandCrankMachine';
 import { addDust, addLantern, addPeekingEyes, addWisps } from '../ui/Ambient';
@@ -41,7 +42,11 @@ function saveTutorialStep(n: number) {
   }
 }
 /** くっついてから合成するまでの待ち（目印を見せる時間） */
-const FUSE_WAIT_MS = 450;
+const FUSE_WAIT_MS = 250;
+/** 「くっついている」とみなす隙間（px） */
+const TOUCH_SLACK = 24;
+/** 同じ色のカプセルどうしがほんのり引き寄せ合う強さ（付喪神の仲間意識）。磁石の瓶で強くなる */
+const BASE_ATTRACT = 1;
 
 export class ShopScene extends Phaser.Scene {
   private hud!: Hud;
@@ -66,6 +71,8 @@ export class ShopScene extends Phaser.Scene {
   private relicShelf?: Phaser.GameObjects.Container;
   private coach?: Coach;
   private machineTop = 0;
+  private lastShuffleAt = 0;
+  private keys?: Phaser.Types.Input.Keyboard.CursorKeys;
   private shelfKey = '';
   private clusterSince = new Map<Capsule, number>();
   private lastClusterCheck = 0;
@@ -152,6 +159,12 @@ export class ShopScene extends Phaser.Scene {
 
     this.refreshUI(false);
     this.coach = new Coach(this);
+    this.keys = this.input.keyboard?.createCursorKeys();
+    // スマホを振ったら瓶をまぜる（ほかの画面に行っている間は無視）
+    tilt.onShake = () => {
+      if (this.scene.isActive() && this.capsules.length > 1) this.shuffleJar();
+    };
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => (tilt.onShake = null));
     this.machineTop = machineTop;
     if (S().pendingMorning) this.morningBanner();
     else this.tutorial('start');
@@ -214,7 +227,7 @@ export class ShopScene extends Phaser.Scene {
       label: 'まぜる',
       size: 24,
       onPress: () => this.shuffleJar(),
-      onDenied: () => toast(this, `今日はもうまぜられない（1日${shufflesPerDay(S())}回まで）`, this.jar.top + 90),
+      onDenied: () => toast(this, 'カプセルが 2 つ以上あるとまぜられる', this.jar.top + 90),
     }).setDepth(230);
 
     this.invIcon = this.add.container(J.right - 74, J.top + 34).setDepth(220);
@@ -228,7 +241,7 @@ export class ShopScene extends Phaser.Scene {
     this.invLabel = txt(this, 14, 0, '', 24, { color: CSS.ink });
     this.invIcon.add([ig, this.invLabel]);
 
-    this.emptyHint = txt(this, 360, (J.top + J.bottom) / 2 + 20, 'ハンドルを回してカプセルを出そう\nカプセルはタップで開封\n同じ色が3つくっつくと色違いに！', 26, {
+    this.emptyHint = txt(this, 360, (J.top + J.bottom) / 2 + 20, 'ハンドルを回してカプセルを出そう\nカプセルはタップで開封\n同じ色が3つくっつくと色違いに！\nスマホを傾ける・振ると寄せられる', 26, {
       color: CSS.cream,
       stroke: CSS.ink,
       strokeThickness: 6,
@@ -289,9 +302,7 @@ export class ShopScene extends Phaser.Scene {
     this.renderRelicShelf();
     this.btnBaito.setEnabled(s.ap >= BALANCE.apCost.baito);
     this.btnClose.setPulse(s.ap === 0);
-    const left = Math.max(0, shufflesPerDay(s) - s.today.shuffles);
-    this.btnShuffle.setLabel(`まぜる ${left}`);
-    this.btnShuffle.setEnabled(left > 0 && this.capsules.length > 1);
+    this.btnShuffle.setEnabled(this.capsules.length > 1);
   }
 
   // ---------- ガチャ ----------
@@ -427,7 +438,7 @@ export class ShopScene extends Phaser.Scene {
         group.push(c);
         for (const o of pool) {
           if (seen.has(o) || o.rarity !== c.rarity) continue;
-          const touch = RARITY_INFO[c.rarity].radius + RARITY_INFO[o.rarity].radius + 4;
+          const touch = RARITY_INFO[c.rarity].radius + RARITY_INFO[o.rarity].radius + TOUCH_SLACK;
           if (Phaser.Math.Distance.Between(c.x, c.y, o.x, o.y) <= touch) {
             seen.add(o);
             stack.push(o);
@@ -508,17 +519,49 @@ export class ShopScene extends Phaser.Scene {
 
   private shuffleJar() {
     const s = S();
+    // 連打で飛ばしすぎないよう、少しだけ間を空ける
+    if (this.time.now - this.lastShuffleAt < 400) return;
+    this.lastShuffleAt = this.time.now;
     s.today.shuffles += 1;
     sfx.play('whoosh', { rate: 0.8 });
     this.cameras.main.shake(260, 0.004);
     for (const c of this.capsules) {
       if (c.busy || !c.active) continue;
-      c.setVelocity(Phaser.Math.FloatBetween(-8, 8), Phaser.Math.FloatBetween(-17, -9));
+      c.setVelocity(Phaser.Math.FloatBetween(-6, 6), Phaser.Math.FloatBetween(-11, -6));
       c.setAngularVelocity(Phaser.Math.FloatBetween(-0.3, 0.3));
     }
     for (let k = 0; k < 5; k++) this.time.delayedCall(120 + k * 90, () => sfx.play('knock', { rate: 0.9 + Math.random() * 0.4 }));
     this.refreshUI();
     save();
+  }
+
+  // ---------- 傾き・振る・磁石 ----------
+
+  /** スマホを傾けた方向（PC は ← →）へ重力を傾ける。磁石の瓶があれば同じ色が引き寄せ合う */
+  private applyTilt() {
+    let tx = tilt.x;
+    if (this.keys?.left.isDown) tx = -1;
+    else if (this.keys?.right.isDown) tx = 1;
+    this.matter.world.setGravity(tx * 1.3, 1.6);
+
+    const pull = runHook(S(), 'onAttract', BASE_ATTRACT);
+    if (pull > 0) {
+      const list = this.capsules.filter((c) => c.active && !c.busy && !c.shiny);
+      for (let i = 0; i < list.length; i++) {
+        for (let j = i + 1; j < list.length; j++) {
+          const a = list[i];
+          const b = list[j];
+          if (a.rarity !== b.rarity) continue;
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const d = Math.hypot(dx, dy);
+          if (d < 1 || d > 220) continue;
+          const f = 0.00008 * pull * ((a.body as MatterJS.BodyType | null)?.mass ?? 1);
+          a.applyForce(new Phaser.Math.Vector2((dx / d) * f, (dy / d) * f));
+          b.applyForce(new Phaser.Math.Vector2((-dx / d) * f, (-dy / d) * f));
+        }
+      }
+    }
   }
 
   // ---------- ぶつかる音 ----------
@@ -816,7 +859,7 @@ export class ShopScene extends Phaser.Scene {
       this.coach.say(at, '出てきたカプセルを\nタップして開けてみな', firstCapsule);
     } else if (step === 1 && ev === 'opened') {
       saveTutorialStep(2);
-      this.coach.say(at, '同じ色が 3 つくっつくと「色違い」に化けるぞ。\n「まぜる」で瓶を揺すれる');
+      this.coach.say(at, '同じ色が 3 つくっつくと「色違い」になるぞ。\nスマホを傾けると転がる。振ったら瓶がまざる');
       this.time.delayedCall(4200, () => {
         if (loadTutorialStep() !== 2) return;
         this.coach?.say(at, 'グッズは「売る」でコインに換えな。\n相場は毎日変わる。瓦版の噂も見とけよ', () => ({ x: 128, y: this.btnY - 70 }));
@@ -970,7 +1013,7 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private goBaito() {
-    this.leaveTo('Baito', { id: 'capsule-fill' });
+    this.leaveTo('Baito');
   }
 
   private closeShop() {
@@ -1048,10 +1091,14 @@ export class ShopScene extends Phaser.Scene {
   }
 
   update() {
+    this.applyTilt();
     this.checkClusters();
     this.coach?.update();
     for (const c of this.capsules) {
       c.syncGlow();
+      // 瓶の口より上へ飛び出しかけたらブレーキ（まぜる・傾けで飛び出さないように）
+      const body = c.body as MatterJS.BodyType | null;
+      if (body && !c.busy && c.y < this.jar.top + 10 && body.velocity.y < 0) c.setVelocityY(body.velocity.y * 0.6);
       // 万一すり抜けたら瓶へ戻す
       if (c.y > GAME_H + 20 || c.x < -50 || c.x > GAME_W + 50) {
         c.setPosition(360, this.jar.top + 20);

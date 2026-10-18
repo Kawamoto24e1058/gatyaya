@@ -56,8 +56,6 @@ export const BALANCE = {
   /** この週数を返済しきると町の借金を完済（TODO(未決)：総額・町ごとの差） */
   weeksPerTown: 5,
   jarCapacity: 20,
-  /** 瓶をまぜられる回数（1 日あたり） */
-  shufflesPerDay: 3,
   /** ガチャで黒いカプセル（縁起物入り）が出る確率 */
   blackCapsuleRate: 0.004,
   /** 色違いを作るのに必要な数 */

@@ -14,7 +14,7 @@ export type RelicHook =
   | 'onPullRefund' // value: 1 回まわしたあとに戻るコイン
   | 'onDayStart' // value: その日の AP 上限
   | 'onJarCapacity' // value: 瓶の容量
-  | 'onShuffles' // value: 1 日にまぜられる回数
+  | 'onAttract' // value: 同じ色のカプセルが引き寄せ合う強さ
   | 'onSellApCost' // value: 出店の AP
   | 'onBaito' // value: バイト代
   | 'onNight' // value: 夜に化ける確率
@@ -66,7 +66,7 @@ export const RELICS: Relic[] = [
   { id: 'goldthread', name: '金の糸', glyph: '糸', rarity: 'common', description: '色違いの売値 ×1.2', hooks: { onSellPrice: (c) => (parseStock(c.prizeId as string).shiny ? c.value * 1.2 : c.value) } },
   { id: 'apron', name: '働き者の前掛け', glyph: '働', rarity: 'common', description: 'バイト代 ×1.4', hooks: { onBaito: (c) => Math.round(c.value * 1.4) } },
   { id: 'informant', name: '情報屋の耳', glyph: '耳', rarity: 'common', description: '噂が当たる確率 +20%', hooks: { onRumorAccuracy: (c) => c.value + 0.2 } },
-  { id: 'whisk', name: 'かき混ぜ棒', glyph: '混', rarity: 'common', description: 'まぜる回数 +3', hooks: { onShuffles: (c) => c.value + 3 } },
+  { id: 'magnet', name: '磁石の瓶', glyph: '磁', rarity: 'common', description: '同じ色のカプセルが強く引き寄せ合う', hooks: { onAttract: (c) => c.value + 2 } },
 
   // ---- rare ----
   { id: 'surf', name: '波乗り', glyph: '波', rarity: 'rare', description: '相場 ×1.8 以上のシリーズの売値 ×1.3', hooks: { onSellPrice: (c) => (trendOf(c) >= 1.8 ? c.value * 1.3 : c.value) } },
@@ -119,8 +119,8 @@ export const RELICS: Relic[] = [
     glyph: '食',
     rarity: 'boss',
     description: '瓶の容量 +15',
-    drawback: '瓶をまぜられない',
-    hooks: { onJarCapacity: (c) => c.value + 15, onShuffles: () => 0 },
+    drawback: 'ガチャ代 +5',
+    hooks: { onJarCapacity: (c) => c.value + 15, onPullCost: (c) => c.value + 5 },
   },
   {
     id: 'hawker',

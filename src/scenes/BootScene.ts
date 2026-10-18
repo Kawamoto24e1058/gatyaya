@@ -2,6 +2,7 @@
 import Phaser from 'phaser';
 import { BOTTOM, CSS, GAME_H, PAL, SAFE_TOP } from '../config';
 import { sfx } from '../core/audio';
+import { enableTiltOnFirstGesture } from '../core/tilt';
 import { RARITIES } from '../data/rarity';
 import { clearSave, hasSave, loadMuted, loadSave, newGame, saveNow, setState } from '../game/state';
 import { addLantern, addPeekingEyes, addWisps } from '../ui/Ambient';
@@ -16,6 +17,8 @@ export class BootScene extends Phaser.Scene {
   create() {
     makeTextures(this);
     sfx.init();
+    // 傾きセンサーの許可（iOS）は最初のタップで求める
+    enableTiltOnFirstGesture();
     sfx.setMuted(loadMuted());
 
     this.add.image(0, 0, 'bg_night').setOrigin(0);

@@ -150,7 +150,7 @@ function rawPrice(state: GameState, prizeId: string, satOverride?: number): numb
   const trend = state.market.series[p.seriesId].trend;
   const event = eventMult(state, p.seriesId);
   const sat = satOverride ?? saturationOf(state.market, prizeId);
-  const v = p.basePrice * (shiny ? SHINY_MULT : 1) * trend * event * sat;
+  const v = p.basePrice * (shiny ? SHINY_MULT : 1) * trend * event * sat * (1 + (state.sellBonusWeek ?? 0));
   return runHook(state, 'onSellPrice', v, { prizeId });
 }
 

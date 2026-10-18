@@ -36,6 +36,16 @@ export type GameState = {
   jarCapacityBase: number;
   /** バイト報酬など、その週だけ有効な瓶容量ボーナス */
   jarBonusWeek: number;
+  /** バイト（梱包）の特典：その週の売値 +n（割合） */
+  sellBonusWeek: number;
+  /** バイト（お化け払い）の特典：今夜は化ける確率 ×2 */
+  nightBoost: boolean;
+  /** バイト（提灯の火入れ）の特典：明日の AP +n */
+  apBonusTomorrow: number;
+  /** 前回のバイト（続けて同じ仕事が出ないように） */
+  lastBaito: string;
+  /** 募集中のバイト（「やめる」で引き直せないよう、遊ぶまで固定） */
+  nextBaito: string;
   inventory: Record<string, number>;
   market: MarketState;
   events: EventState;
@@ -69,6 +79,11 @@ export function newGame(): GameState {
     jarShiny: [],
     jarCapacityBase: BALANCE.jarCapacity,
     jarBonusWeek: 0,
+    sellBonusWeek: 0,
+    nightBoost: false,
+    apBonusTomorrow: 0,
+    lastBaito: '',
+    nextBaito: '',
     inventory: {},
     market: initMarket(),
     events: initEvents(),
@@ -100,7 +115,6 @@ export function jarCapacity(s: GameState): number {
 /** 縁起物を反映した値 */
 export const pullCost = (s: GameState, base: number) => runHook(s, 'onPullCost', base);
 export const sellApCost = (s: GameState) => runHook(s, 'onSellApCost', BALANCE.apCost.sell);
-export const shufflesPerDay = (s: GameState) => runHook(s, 'onShuffles', BALANCE.shufflesPerDay);
 
 /** 今週の返済額（縁起物で減ることがある） */
 export function dueAmount(s: GameState): number {
@@ -124,7 +138,9 @@ export function isPayday(s: GameState): boolean {
 export function advanceDay(s: GameState): void {
   s.day += 1;
   s.apMax = runHook(s, 'onDayStart', BALANCE.apPerDay);
+  s.apMax += s.apBonusTomorrow;
   s.ap = s.apMax;
+  s.apBonusTomorrow = 0;
   advanceMarketDay(s.market, s.day);
   advanceEvents(s);
   s.today = freshDay(s.coins);
@@ -141,7 +157,7 @@ function nightTransform(s: GameState): void {
   s.nightChanges = [];
   s.jar.forEach((r, i) => {
     const next = nextRarity(r);
-    const chance = runHook(s, 'onNight', NIGHT_CHANCE[r], { rarity: r });
+    const chance = runHook(s, 'onNight', NIGHT_CHANCE[r], { rarity: r }) * (s.nightBoost ? 2 : 1);
     if (!next || Math.random() >= chance) return;
     s.jar[i] = next;
     s.nightChanges.push(i);
@@ -149,6 +165,7 @@ function nightTransform(s: GameState): void {
     s.totals.transforms += 1;
     if (!s.totals.bestRarity || RARITY_INFO[next].index > RARITY_INFO[s.totals.bestRarity].index) s.totals.bestRarity = next;
   });
+  s.nightBoost = false;
 }
 
 /** 返済。成功なら true */
@@ -161,6 +178,7 @@ export function payDebt(s: GameState): boolean {
   s.week += 1;
   s.quota = Math.round(s.quota * BALANCE.quotaGrowth) + carry;
   s.jarBonusWeek = 0;
+  s.sellBonusWeek = 0;
   return true;
 }
 
@@ -213,6 +231,11 @@ export function loadSave(): GameState | null {
     migrateMarket(s.market, s.day);
     // 合体廃止前のセーブを補う
     s.nightChanges ??= [];
+    s.sellBonusWeek ??= 0;
+    s.nightBoost ??= false;
+    s.apBonusTomorrow ??= 0;
+    s.lastBaito ??= '';
+    s.nextBaito ??= '';
     s.events ??= initEvents();
     s.jarShiny ??= s.jar.map(() => false);
     s.today.shuffles ??= 0;
