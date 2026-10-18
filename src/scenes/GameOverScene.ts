@@ -11,6 +11,12 @@ export class GameOverScene extends Phaser.Scene {
     super('GameOver');
   }
 
+  private cleared = false;
+
+  init(data: { cleared?: boolean }) {
+    this.cleared = !!data?.cleared;
+  }
+
   create() {
     const s = S();
     // 再開時にゲームオーバー直前から始まらないよう、ここでセーブを消す
@@ -28,18 +34,33 @@ export class GameOverScene extends Phaser.Scene {
     og.lineStyle(6, PAL.blood, 1);
     og.strokeRect(-100, -130, 200, 260);
     ofuda.add(og);
-    ofuda.add(txt(this, 0, -10, '差\n押', 96, { color: CSS.bad }));
+    ofuda.add(txt(this, 0, -10, this.cleared ? '完\n済' : '差\n押', 96, { color: this.cleared ? CSS.good : CSS.bad }));
     ofuda.setScale(2).setAlpha(0);
     this.tweens.add({ targets: ofuda, scale: 1, alpha: 1, duration: 260, ease: 'Back.easeOut', onComplete: () => sfx.play('stamp') });
 
-    title(this, 360, GAME_H * 0.38, 'ゲームオーバー', 56, '#f2a090');
-    txt(this, 360, GAME_H * 0.38 + 60, '店は差し押さえられた…', 28, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 5 });
+    if (this.cleared) {
+      const conf = this.add.particles(0, 0, 'confetti', {
+        x: { min: 0, max: GAME_W },
+        y: -20,
+        speedY: { min: 120, max: 260 },
+        speedX: { min: -40, max: 40 },
+        rotate: { start: 0, end: 540 },
+        lifespan: 6000,
+        frequency: 60,
+        tint: [PAL.vermilion, PAL.mustard, PAL.moss, PAL.teal, PAL.lavender, PAL.paper],
+      });
+      conf.setDepth(5);
+      this.time.delayedCall(300, () => sfx.play('fanfare'));
+    }
+    title(this, 360, GAME_H * 0.38, this.cleared ? '借金完済！' : 'ゲームオーバー', 56, this.cleared ? CSS.gold : '#f2a090');
+    txt(this, 360, GAME_H * 0.38 + 60, this.cleared ? 'この町の借金をすべて返した！' : '店は差し押さえられた…', 28, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 5 });
+    // TODO(Phase 3): 完済したら次の町へ（ノルマ・相場・イベントを新しく抽選）
 
     const py = GAME_H * 0.6;
     const pg = this.add.graphics();
     drawPlate(pg, 80, py - 170, 560, 360, PAL.paper, { radius: 12, shadow: 8, outline: 5, shine: false });
     const rows: [string, string][] = [
-      ['到達', `第${s.week}週 ${s.day}日目`],
+      ['到達', `第${this.cleared ? s.week - 1 : s.week}週 ${s.day}日目`],
       ['ガチャ回数', `${s.totals.pulls}回`],
       ['化けた回数', `${s.totals.transforms}回`],
       ['総売上', fmt(s.totals.sales)],
@@ -56,7 +77,7 @@ export class GameOverScene extends Phaser.Scene {
       w: 460,
       h: 116,
       color: PAL.vermilion,
-      label: 'もう一度',
+      label: this.cleared ? '新しい町で始める' : 'もう一度',
       onPress: () => {
         setState(newGame());
         saveNow();

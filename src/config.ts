@@ -50,8 +50,11 @@ export const BALANCE = {
     move: 1, // TODO(Phase 3): 町の移動
   },
   daysPerWeek: 7,
-  firstQuota: 500,
-  quotaGrowth: 2.2,
+  // シミュレーター（npm run sim）で調整：縁起物なし・相場を読むプレイで 5 週完済が約半分
+  firstQuota: 1000,
+  quotaGrowth: 1.7,
+  /** この週数を返済しきると町の借金を完済（TODO(未決)：総額・町ごとの差） */
+  weeksPerTown: 5,
   jarCapacity: 20,
   /** 瓶をまぜられる回数（1 日あたり） */
   shufflesPerDay: 3,

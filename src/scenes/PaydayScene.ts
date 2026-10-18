@@ -1,6 +1,6 @@
 // 返済日：取り立て屋が現れる。ノルマ未達ならゲームオーバー
 import Phaser from 'phaser';
-import { BOTTOM, CSS, GAME_H, GAME_W, PAL } from '../config';
+import { BALANCE, BOTTOM, CSS, GAME_H, GAME_W, PAL } from '../config';
 import { sfx } from '../core/audio';
 import { fmt } from '../core/util';
 import { advanceDay, payDebt, S, saveNow } from '../game/state';
@@ -78,14 +78,29 @@ export class PaydayScene extends Phaser.Scene {
     this.time.delayedCall(2900, () => {
       if (ok) {
         payDebt(s);
+        const cleared = s.week > BALANCE.weeksPerTown;
         countUp(this, coinsBefore, s.coins, 600, (v) => coinT.setText(fmt(v)));
         col.satisfied();
-        say('…確かに。また来週な', 0);
+        say(cleared ? '…ちっ、全部返されちまった。\nこの町じゃもう取り立てられねぇ' : '…確かに。また来週な', 0);
         sfx.play('reji');
         sfx.play('fanfare', { delay: 0.4 });
-        stamp(this, 380, py + 96, '返済完了', 64, CSS.good, { hold: Infinity, angle: -8, depth: 50 });
+        stamp(this, 380, py + 96, cleared ? '完済' : '返済完了', cleared ? 96 : 64, CSS.good, { hold: Infinity, angle: -8, depth: 50 });
         this.tweens.add({ targets: col, y: GAME_H + 400, delay: 1600, duration: 900, ease: 'Cubic.easeIn' });
-        txt(this, 360, py + 180, `来週のノルマ ${fmt(s.quota)}`, 32, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 6 }).setDepth(30);
+        if (cleared) {
+          this.time.delayedCall(700, () => sfx.play('fanfare', { rate: 1.12 }));
+          new Button(this, 360, BOTTOM - 80, {
+            w: 440,
+            h: 112,
+            color: PAL.mustard,
+            label: '完済の記録を見る',
+            onPress: () => {
+              this.scene.stop('Shop');
+              this.scene.start('GameOver', { cleared: true });
+            },
+          }).setDepth(60);
+          return;
+        }
+        txt(this, 360, py + 180, `来週のノルマ ${fmt(s.quota)}  （完済まであと${BALANCE.weeksPerTown - s.week + 1}週）`, 28, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 6 }).setDepth(30);
         // TODO(Phase 2): ここでレリックショップ（3 つから 1 つ選ぶ）へ
         new Button(this, 360, BOTTOM - 80, {
           w: 440,
