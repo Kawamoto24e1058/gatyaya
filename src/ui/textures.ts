@@ -2,12 +2,69 @@
 import Phaser from 'phaser';
 import { GAME_H, GAME_W } from '../config';
 import { PRIZE_BY_ID, PRIZES } from '../data/prizes';
+import { RELICS, type Relic } from '../game/relics';
 import { RARITIES, RARITY_INFO, type Rarity } from '../data/rarity';
 import { INK, inkStroke, paintDuskBg, rr } from './art';
 import { drawItem, ITEM_H, ITEM_W } from './items';
 
 export const capsuleKey = (r: Rarity) => `cap_${r}`;
 export const itemKey = (prizeId: string) => `item_${prizeId}`;
+export const omamoriKey = (relicId: string) => `omamori_${relicId}`;
+
+const OMAMORI_COLOR: Record<Relic['rarity'], [string, string]> = {
+  common: ['#5a9a6e', '#3f7350'],
+  rare: ['#5b8fc9', '#3d6b9e'],
+  boss: ['#b0303a', '#7e1f28'],
+};
+
+/** 縁起物のお守り袋（80×110） */
+function drawOmamori(c: CanvasRenderingContext2D, r: Relic) {
+  const [col, dark] = OMAMORI_COLOR[r.rarity];
+  // 紐
+  c.strokeStyle = '#e8b13a';
+  c.lineWidth = 4;
+  c.beginPath();
+  c.moveTo(40, 4);
+  c.quadraticCurveTo(28, 14, 34, 24);
+  c.moveTo(40, 4);
+  c.quadraticCurveTo(52, 14, 46, 24);
+  c.stroke();
+  // 袋
+  c.beginPath();
+  c.moveTo(18, 30);
+  c.quadraticCurveTo(40, 18, 62, 30);
+  c.lineTo(70, 100);
+  c.quadraticCurveTo(40, 108, 10, 100);
+  c.closePath();
+  const g = c.createLinearGradient(0, 20, 0, 106);
+  g.addColorStop(0, col);
+  g.addColorStop(1, dark);
+  c.fillStyle = g;
+  c.fill();
+  inkStroke(c, 4);
+  // 刺繍の縁
+  c.setLineDash([4, 4]);
+  c.strokeStyle = 'rgba(232,177,58,0.8)';
+  c.lineWidth = 2;
+  c.beginPath();
+  c.moveTo(22, 36);
+  c.quadraticCurveTo(40, 26, 58, 36);
+  c.lineTo(64, 94);
+  c.quadraticCurveTo(40, 100, 16, 94);
+  c.closePath();
+  c.stroke();
+  c.setLineDash([]);
+  // 札と 1 文字
+  rr(c, 24, 42, 32, 44, 4);
+  c.fillStyle = '#f6ead2';
+  c.fill();
+  inkStroke(c, 2.5);
+  c.font = '900 26px sans-serif';
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  c.fillStyle = r.rarity === 'boss' ? '#b0303a' : '#24172e';
+  c.fillText(r.glyph, 40, 65);
+}
 
 /** 色相を回す（CSS の hue-rotate と同じ行列）。輪郭の墨色はほぼそのまま残る */
 function hueRotate(img: ImageData, deg: number, sat = 1.25) {
@@ -164,6 +221,45 @@ export function makeTextures(scene: Phaser.Scene): void {
   }
 
   for (const p of PRIZES) canvasTex(scene, itemKey(p.id), ITEM_W, ITEM_H, (c) => drawItem(c, p));
+  for (const r of RELICS) canvasTex(scene, omamoriKey(r.id), 80, 110, (c) => drawOmamori(c, r));
+
+  // 黒いカプセル（縁起物入り）。お札で封じてある
+  canvasTex(scene, 'cap_black', 92, 92, (c) => {
+    c.beginPath();
+    c.arc(46, 46, 42, 0, Math.PI * 2);
+    const g = c.createLinearGradient(0, 4, 0, 88);
+    g.addColorStop(0, '#3b2a44');
+    g.addColorStop(1, '#0d0710');
+    c.fillStyle = g;
+    c.fill();
+    inkStroke(c, 5);
+    c.beginPath();
+    c.moveTo(6, 46);
+    c.lineTo(86, 46);
+    inkStroke(c, 3);
+    c.save();
+    c.translate(46, 46);
+    c.rotate(-0.3);
+    rr(c, -12, -40, 24, 80, 3);
+    c.fillStyle = '#f6ead2';
+    c.fill();
+    inkStroke(c, 2.5);
+    c.strokeStyle = '#b0303a';
+    c.lineWidth = 2.5;
+    c.beginPath();
+    c.moveTo(0, -30);
+    c.lineTo(0, 30);
+    c.moveTo(-6, -14);
+    c.lineTo(6, -6);
+    c.moveTo(-6, 8);
+    c.lineTo(6, 16);
+    c.stroke();
+    c.restore();
+    c.fillStyle = 'rgba(255,255,255,0.35)';
+    c.beginPath();
+    c.ellipse(28, 22, 12, 6, -0.6, 0, Math.PI * 2);
+    c.fill();
+  });
 
   canvasTex(scene, 'dot', 16, 16, (c) => {
     const g = c.createRadialGradient(8, 8, 0, 8, 8, 8);

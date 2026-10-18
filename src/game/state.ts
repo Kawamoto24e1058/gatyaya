@@ -91,7 +91,17 @@ export function setState(s: GameState): void {
 }
 
 export function jarCapacity(s: GameState): number {
-  return s.jarCapacityBase + s.jarBonusWeek;
+  return runHook(s, 'onJarCapacity', s.jarCapacityBase + s.jarBonusWeek);
+}
+
+/** 縁起物を反映した値 */
+export const pullCost = (s: GameState, base: number) => runHook(s, 'onPullCost', base);
+export const sellApCost = (s: GameState) => runHook(s, 'onSellApCost', BALANCE.apCost.sell);
+export const shufflesPerDay = (s: GameState) => runHook(s, 'onShuffles', BALANCE.shufflesPerDay);
+
+/** 今週の返済額（縁起物で減ることがある） */
+export function dueAmount(s: GameState): number {
+  return runHook(s, 'onPayday', s.quota);
 }
 
 export function inventoryCount(s: GameState): number {
@@ -139,14 +149,25 @@ function nightTransform(s: GameState): void {
 
 /** 返済。成功なら true */
 export function payDebt(s: GameState): boolean {
-  const quota = runHook(s, 'onPayday', s.quota);
-  if (s.coins < quota) return false;
-  s.coins -= quota;
+  const due = dueAmount(s);
+  if (s.coins < due) return false;
+  s.coins -= due;
+  // 繰り延べた分（借金の天才）は翌週のノルマに乗る
+  const carry = Math.max(0, s.quota - due);
   s.week += 1;
-  s.quota = Math.round(s.quota * BALANCE.quotaGrowth);
+  s.quota = Math.round(s.quota * BALANCE.quotaGrowth) + carry;
   s.jarBonusWeek = 0;
-  // TODO(Phase 2): 返済後にレリックショップ（3 つから 1 つ）
   return true;
+}
+
+export function addRelic(s: GameState, id: string): void {
+  if (!s.relics.includes(id)) s.relics.push(id);
+  // AP が増える縁起物はその日から効かせる
+  const apMax = runHook(s, 'onDayStart', BALANCE.apPerDay);
+  if (apMax !== s.apMax) {
+    s.ap = Math.max(0, s.ap + (apMax - s.apMax));
+    s.apMax = apMax;
+  }
 }
 
 // ---- 保存 ----

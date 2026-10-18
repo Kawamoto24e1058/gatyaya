@@ -9,7 +9,10 @@ import { MACHINE_BY_ID } from '../src/data/machines';
 import { parseStock, prizesOf, stockKey } from '../src/data/prizes';
 import { RARITIES, type Rarity } from '../src/data/rarity';
 import { sellOne, sellPrice } from '../src/game/market';
-import { advanceDay, jarCapacity, newGame, payDebt, type GameState } from '../src/game/state';
+import { paydayOffer, rollRelics, runHook } from '../src/game/relics';
+import { addRelic, advanceDay, jarCapacity, newGame, payDebt, pullCost, sellApCost, type GameState } from '../src/game/state';
+
+const USE_RELICS = process.env.RELICS !== '0';
 
 const RUNS = Number(process.argv[2] ?? 2000);
 // 数値の試し打ち：COST=25 Q0=800 G=1.7 npm run sim
@@ -37,10 +40,20 @@ type Strategy = {
 };
 
 function pull(s: GameState) {
-  s.coins -= machine.cost;
+  const cost = pullCost(s, machine.cost);
+  s.coins -= cost;
+  s.coins += runHook(s, 'onPullRefund', 0, { cost });
   s.today.pulls += 1;
   s.totals.pulls += 1;
-  s.jar.push(weightedPick(machine.rarityWeights));
+  // 黒いカプセル：縁起物をランダムに 1 つ取る（近似）
+  if (USE_RELICS && Math.random() < BALANCE.blackCapsuleRate) {
+    const r = rollRelics(s, 3, ['common', 'rare']);
+    if (r.length) {
+      addRelic(s, pick(r).id);
+      return;
+    }
+  }
+  s.jar.push(runHook(s, 'onGachaRoll', weightedPick(machine.rarityWeights)));
   s.jarShiny.push(false);
 }
 
@@ -74,7 +87,7 @@ function openAll(s: GameState) {
 }
 
 function pullAll(s: GameState, reserve: number) {
-  while (s.coins - machine.cost >= reserve && s.jar.length < jarCapacity(s)) {
+  while (s.coins - pullCost(s, machine.cost) >= reserve && s.jar.length < jarCapacity(s)) {
     pull(s);
     if (s.jar.length >= jarCapacity(s)) fuseJar(s);
   }
@@ -97,7 +110,7 @@ function playDay(s: GameState, st: Strategy): void {
   const daysLeft = (BALANCE.daysPerWeek - (s.day % BALANCE.daysPerWeek)) % BALANCE.daysPerWeek;
   for (let i = 0; i < 2 && s.ap >= BALANCE.apCost.baito; i++) {
     s.ap -= BALANCE.apCost.baito;
-    s.coins += baitoCoins();
+    s.coins += runHook(s, 'onBaito', baitoCoins());
     if (Math.random() < BAITO_BONUS_RATE) s.jarBonusWeek += 1;
   }
   const payday = daysLeft === 0;
@@ -105,8 +118,8 @@ function playDay(s: GameState, st: Strategy): void {
   const reserve = payday ? s.quota : 0;
   pullAll(s, reserve);
   openAll(s);
-  if (s.ap >= BALANCE.apCost.sell) {
-    s.ap -= BALANCE.apCost.sell;
+  if (s.ap >= sellApCost(s)) {
+    s.ap -= sellApCost(s);
     if (payday && s.coins < s.quota) {
       // 返済日：高く売れる順に、ノルマに届くまで売る
       const keys = Object.keys(s.inventory).sort((a, b) => sellPrice(s, b) - sellPrice(s, a));
@@ -119,6 +132,8 @@ function playDay(s: GameState, st: Strategy): void {
 
 function runOnce(st: Strategy): { weeks: number; coinsAtPayday: number[] } {
   const s = newGame();
+  // 特定の縁起物だけを最初から持たせる：FORCE=goldhandle RELICS=0 npm run sim
+  if (process.env.FORCE) addRelic(s, process.env.FORCE);
   const coinsAtPayday: number[] = [];
   for (let w = 1; w <= MAX_WEEKS; w++) {
     for (let d = 0; d < BALANCE.daysPerWeek; d++) {
@@ -126,6 +141,11 @@ function runOnce(st: Strategy): { weeks: number; coinsAtPayday: number[] } {
       if (d === BALANCE.daysPerWeek - 1) {
         coinsAtPayday.push(s.coins / s.quota);
         if (!payDebt(s)) return { weeks: w - 1, coinsAtPayday };
+        // 取り立て屋の品：ランダムに 1 つ取る（近似）
+        if (USE_RELICS) {
+          const offer = paydayOffer(s);
+          if (offer.length) addRelic(s, pick(offer).id);
+        }
       }
       advanceDay(s);
     }

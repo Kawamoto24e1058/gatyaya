@@ -10,6 +10,8 @@ export interface MachineView {
   readonly bottom: number;
   /** 出たカプセルのレア度に反応する（目・体のリアクション） */
   react(rarityIndex: number): void;
+  /** 値札の表示を変える（縁起物でガチャ代が変わったとき） */
+  setPrice?(cost: number): void;
   destroy(): void;
   /** 他の UI が前面にある間などに入力を止める */
   setInputEnabled(on: boolean): void;

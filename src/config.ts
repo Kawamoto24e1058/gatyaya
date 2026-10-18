@@ -50,14 +50,16 @@ export const BALANCE = {
     move: 1, // TODO(Phase 3): 町の移動
   },
   daysPerWeek: 7,
-  // シミュレーター（npm run sim）で調整：縁起物なし・相場を読むプレイで 5 週完済が約半分
+  // シミュレーター（npm run sim）で調整：縁起物をランダムに取るプレイで 5 週完済 約 7 割、縁起物なしでは約 5%
   firstQuota: 1000,
-  quotaGrowth: 1.7,
+  quotaGrowth: 2.0,
   /** この週数を返済しきると町の借金を完済（TODO(未決)：総額・町ごとの差） */
   weeksPerTown: 5,
   jarCapacity: 20,
   /** 瓶をまぜられる回数（1 日あたり） */
   shufflesPerDay: 3,
+  /** ガチャで黒いカプセル（縁起物入り）が出る確率 */
+  blackCapsuleRate: 0.004,
   /** 色違いを作るのに必要な数 */
   fuseMin: 3,
   saturationPerSale: 0.92,

@@ -3,6 +3,7 @@ import Phaser from 'phaser';
 import { BALANCE, CSS, GAME_H, GAME_W, PAL } from '../config';
 import { sfx } from '../core/audio';
 import { fmt } from '../core/util';
+import { runHook } from '../game/relics';
 import { S, save } from '../game/state';
 import { MINIGAME_BY_ID } from '../minigames/registry';
 import { applyReward, rewardLabel, type MiniGame, type MiniGameDef } from '../minigames/types';
@@ -131,6 +132,8 @@ export class BaitoScene extends Phaser.Scene {
     const result = this.game_.onEnd();
     this.game_.destroy?.();
     const s = S();
+    // 縁起物でバイト代が増減する
+    result.coins = runHook(s, 'onBaito', result.coins);
     s.coins += result.coins;
     s.today.wages += result.coins;
     if (result.bonus) applyReward(s, result.bonus);

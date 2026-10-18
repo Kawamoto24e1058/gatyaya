@@ -3,7 +3,9 @@ import Phaser from 'phaser';
 import { BALANCE, BOTTOM, CSS, GAME_H, GAME_W, PAL } from '../config';
 import { sfx } from '../core/audio';
 import { fmt } from '../core/util';
-import { advanceDay, payDebt, S, saveNow } from '../game/state';
+import { addRelic, advanceDay, dueAmount, payDebt, S, saveNow } from '../game/state';
+import { paydayOffer } from '../game/relics';
+import { showRelicPicker } from '../ui/RelicPicker';
 import { Collector } from '../ui/Collector';
 import { Button, countUp, drawPlate, stamp, title, txt } from '../ui/widgets';
 
@@ -24,7 +26,7 @@ export class PaydayScene extends Phaser.Scene {
     this.tweens.add({ targets: col, y: collectorY, duration: 900, ease: 'Cubic.easeOut' });
     this.time.addEvent({ delay: 2200, loop: true, callback: () => col.blink() });
 
-    const quota = s.quota;
+    const quota = dueAmount(s);
     const coinsBefore = s.coins;
     const ok = coinsBefore >= quota;
 
@@ -85,8 +87,9 @@ export class PaydayScene extends Phaser.Scene {
         sfx.play('reji');
         sfx.play('fanfare', { delay: 0.4 });
         stamp(this, 380, py + 96, cleared ? '完済' : '返済完了', cleared ? 96 : 64, CSS.good, { hold: Infinity, angle: -8, depth: 50 });
-        this.tweens.add({ targets: col, y: GAME_H + 400, delay: 1600, duration: 900, ease: 'Cubic.easeIn' });
+        const leave = () => this.tweens.add({ targets: col, y: GAME_H + 400, duration: 900, ease: 'Cubic.easeIn' });
         if (cleared) {
+          this.time.delayedCall(1600, leave);
           this.time.delayedCall(700, () => sfx.play('fanfare', { rate: 1.12 }));
           new Button(this, 360, BOTTOM - 80, {
             w: 440,
@@ -101,8 +104,7 @@ export class PaydayScene extends Phaser.Scene {
           return;
         }
         txt(this, 360, py + 180, `来週のノルマ ${fmt(s.quota)}  （完済まであと${BALANCE.weeksPerTown - s.week + 1}週）`, 28, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 6 }).setDepth(30);
-        // TODO(Phase 2): ここでレリックショップ（3 つから 1 つ選ぶ）へ
-        new Button(this, 360, BOTTOM - 80, {
+        const next = new Button(this, 360, BOTTOM - 80, {
           w: 440,
           h: 112,
           color: PAL.moss,
@@ -113,7 +115,33 @@ export class PaydayScene extends Phaser.Scene {
             this.scene.stop();
             this.scene.wake('Shop');
           },
-        }).setDepth(60);
+        })
+          .setDepth(60)
+          .setVisible(false);
+        // 取り立て屋の品：通常 2 つ＋訳あり 1 つから選ぶ（Slay the Spire のボス報酬にあたる）
+        const offer = paydayOffer(s);
+        this.time.delayedCall(2600, () => {
+          if (offer.length === 0) {
+            leave();
+            next.setVisible(true);
+            return;
+          }
+          say('ついでだ、こいつを持ってけ。\nタダとは言わねぇが…ヒッヒ', 0);
+          this.time.delayedCall(900, () =>
+            showRelicPicker(this, {
+              heading: '取り立て屋の品',
+              sub: '訳あり品は強いが、欠点がある',
+              relics: offer,
+              onDone: (r) => {
+                if (r) addRelic(s, r.id);
+                saveNow();
+                say(r ? (r.rarity === 'boss' ? 'ヒッヒ…毎度あり' : 'せいぜい稼ぐんだな') : 'ちっ、欲のねぇやつだ', 0);
+                this.time.delayedCall(1200, leave);
+                next.setVisible(true);
+              },
+            }),
+          );
+        });
       } else {
         col.furious();
         sfx.play('fail');

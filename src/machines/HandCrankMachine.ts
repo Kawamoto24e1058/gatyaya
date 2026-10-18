@@ -43,6 +43,7 @@ class HandCrankMachine implements MachineView {
   private squint: Phaser.GameObjects.Graphics;
   private smoke: Phaser.GameObjects.Particles.ParticleEmitter;
 
+  private priceText!: Phaser.GameObjects.Text;
   private enabled = true;
   private dragId: number | null = null;
   private lastPointerAngle = 0;
@@ -219,6 +220,7 @@ class HandCrankMachine implements MachineView {
     tg.fillCircle(-6, 38, 4);
     const tt1 = txt(scene, -6, 56, '1回', 18, { color: CSS.inkSoft });
     const tt2 = txt(scene, -6, 80, `${def.cost}`, 28, { color: CSS.bad });
+    this.priceText = tt2;
     this.tag.add([tg, tt1, tt2]).setAngle(-8);
 
     // ---- ハンドル（回転部） ----
@@ -445,6 +447,10 @@ class HandCrankMachine implements MachineView {
     this.dragId = null;
     this.setStrain(false);
     this.scheduleHint();
+  }
+
+  setPrice(cost: number) {
+    this.priceText.setText(`${cost}`);
   }
 
   setInputEnabled(on: boolean) {

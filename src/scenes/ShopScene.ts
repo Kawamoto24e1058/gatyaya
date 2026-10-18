@@ -7,8 +7,10 @@ import { MACHINE_BY_ID, type GachaMachineDef } from '../data/machines';
 import { KIND_LABEL, prizesOf, SERIES, stockKey, type Prize } from '../data/prizes';
 import { RARITY_INFO, type Rarity } from '../data/rarity';
 import { Capsule } from '../game/Capsule';
-import { runHook } from '../game/relics';
-import { daysUntilPayday, inventoryCount, isPayday, jarCapacity, S, save, saveNow } from '../game/state';
+import { RELIC_BY_ID, rollRelics, runHook } from '../game/relics';
+import { showRelicPicker } from '../ui/RelicPicker';
+import { omamoriKey } from '../ui/textures';
+import { addRelic, daysUntilPayday, dueAmount, inventoryCount, isPayday, jarCapacity, pullCost, S, save, saveNow, sellApCost, shufflesPerDay } from '../game/state';
 import { createMachineView, type MachineView } from '../machines/types';
 import '../machines/HandCrankMachine';
 import { addDust, addLantern, addPeekingEyes, addWisps } from '../ui/Ambient';
@@ -42,6 +44,8 @@ export class ShopScene extends Phaser.Scene {
   private closeArmedUntil = 0;
   private revealing = 0;
   private restoreQueue: { r: Rarity; shiny: boolean }[] = [];
+  private relicShelf?: Phaser.GameObjects.Container;
+  private shelfKey = '';
   private clusterSince = new Map<Capsule, number>();
   private lastClusterCheck = 0;
   private btnShuffle!: Button;
@@ -57,6 +61,8 @@ export class ShopScene extends Phaser.Scene {
     this.revealing = 0;
     this.clusterSince = new Map();
     this.lastClusterCheck = 0;
+    this.relicShelf = undefined;
+    this.shelfKey = '';
 
     // ---- レイアウト（縦長端末では余白を機械の上と瓶に配分） ----
     const top = Hud.bottom();
@@ -183,7 +189,7 @@ export class ShopScene extends Phaser.Scene {
       label: 'まぜる',
       size: 24,
       onPress: () => this.shuffleJar(),
-      onDenied: () => toast(this, '今日はもうまぜられない（1日3回まで）', this.jar.top + 90),
+      onDenied: () => toast(this, `今日はもうまぜられない（1日${shufflesPerDay(S())}回まで）`, this.jar.top + 90),
     }).setDepth(230);
 
     this.invIcon = this.add.container(J.right - 74, J.top + 34).setDepth(220);
@@ -212,7 +218,7 @@ export class ShopScene extends Phaser.Scene {
       color: PAL.moss,
       icon: 'ic_sell',
       label: '売る',
-      sub: `出店 ${BALANCE.apCost.sell}AP`,
+      sub: `出店 ${sellApCost(S())}AP`,
       size: 34,
       onPress: () => this.goMarket(),
       onDenied: () => this.explainDenied('sell'),
@@ -251,10 +257,13 @@ export class ShopScene extends Phaser.Scene {
     this.jarLabel.setColor(full ? CSS.bad : CSS.ink);
     this.invLabel.setText(`所持 ${inventoryCount(s)}`);
     this.emptyHint.setVisible(this.capsules.length === 0 && s.jar.length === 0 && s.totals.pulls < 3);
-    this.btnSell.setEnabled(s.ap >= BALANCE.apCost.sell && inventoryCount(s) > 0);
+    this.btnSell.setLabel('売る', `出店 ${sellApCost(s)}AP`);
+    this.btnSell.setEnabled(s.ap >= sellApCost(s) && inventoryCount(s) > 0);
+    this.machine.setPrice?.(pullCost(s, this.def.cost));
+    this.renderRelicShelf();
     this.btnBaito.setEnabled(s.ap >= BALANCE.apCost.baito);
     this.btnClose.setPulse(s.ap === 0);
-    const left = BALANCE.shufflesPerDay - s.today.shuffles;
+    const left = Math.max(0, shufflesPerDay(s) - s.today.shuffles);
     this.btnShuffle.setLabel(`まぜる ${left}`);
     this.btnShuffle.setEnabled(left > 0 && this.capsules.length > 1);
   }
@@ -263,17 +272,39 @@ export class ShopScene extends Phaser.Scene {
 
   private canPull(): true | string {
     const s = S();
-    if (s.coins < this.def.cost) return 'コインが足りない…\n景品を売るかバイトで稼ごう';
+    if (s.coins < pullCost(s, this.def.cost)) return 'コインが足りない…\n景品を売るかバイトで稼ごう';
     if (this.capsules.length + this.restoreQueue.length >= jarCapacity(s)) return '瓶がいっぱい！\nタップで開けるか、合体させて空けよう';
     return true;
   }
 
   private pull() {
     const s = S();
-    s.coins -= this.def.cost;
+    const cost = pullCost(s, this.def.cost);
+    s.coins -= cost;
     s.today.pulls += 1;
-    s.today.gachaSpent += this.def.cost;
+    s.today.gachaSpent += cost;
     s.totals.pulls += 1;
+    const ct = this.hud.coinTarget();
+    floatText(this, ct.x + 120, ct.y + 30, `-${cost}`, CSS.bad, 26);
+
+    // 招き狸など：お代が戻る
+    const refund = runHook(s, 'onPullRefund', 0, { cost });
+    if (refund > 0) {
+      s.coins += refund;
+      s.today.gachaSpent -= refund;
+      this.time.delayedCall(250, () => {
+        sfx.play('coin');
+        floatText(this, ct.x + 120, ct.y + 70, `お代返し +${refund}`, CSS.gold, 24);
+      });
+    }
+
+    // まれに黒いカプセル（縁起物入り）
+    if (Math.random() < BALANCE.blackCapsuleRate && rollRelics(s, 3, ['common', 'rare']).length > 0) {
+      this.blackCapsule();
+      this.refreshUI();
+      save();
+      return;
+    }
 
     const rolled = weightedPick(this.def.rarityWeights);
     const rarity = runHook(s, 'onGachaRoll', rolled, { machineId: this.def.id });
@@ -283,9 +314,6 @@ export class ShopScene extends Phaser.Scene {
     c.setScale(0.75);
     this.tweens.add({ targets: c, scale: 1, duration: 220, ease: 'Back.easeOut' });
     this.noteBest(rarity);
-
-    const ct = this.hud.coinTarget();
-    floatText(this, ct.x + 120, ct.y + 30, `-${this.def.cost}`, CSS.bad, 26);
     this.rareDispenseFx(rarity, out.x, out.y);
     this.refreshUI();
     save();
@@ -739,11 +767,94 @@ export class ShopScene extends Phaser.Scene {
     return c;
   }
 
+  // ---------- 縁起物 ----------
+
+  /** 店の壁に縁起物を飾る（左右の壁に 2×2 ずつ）。タップで効果を表示 */
+  private renderRelicShelf() {
+    const ids = S().relics;
+    const key = ids.join(',');
+    if (key === this.shelfKey) return;
+    this.shelfKey = key;
+    this.relicShelf?.destroy();
+    const top = Hud.bottom();
+    const slots = [
+      [52, top + 268],
+      [124, top + 268],
+      [52, top + 360],
+      [124, top + 360],
+      [592, top + 300],
+      [664, top + 300],
+      [592, top + 392],
+      [664, top + 392],
+    ];
+    const c = this.add.container(0, 0).setDepth(90);
+    ids.slice(0, slots.length).forEach((id, i) => {
+      const r = RELIC_BY_ID[id];
+      if (!r) return;
+      const [x, y] = slots[i];
+      // 吊るし紐
+      const cord = this.add.graphics();
+      cord.lineStyle(2, PAL.mustard, 0.8);
+      cord.lineBetween(x, y - 52, x, y - 36);
+      const img = this.add.image(x, y, omamoriKey(id)).setScale(0.72).setOrigin(0.5, 0.45);
+      img.setInteractive({ useHandCursor: true }).on('pointerdown', () => {
+        sfx.play('tap');
+        this.tweens.add({ targets: img, angle: { from: -12, to: 0 }, duration: 400, ease: 'Back.easeOut' });
+        toast(this, `${r.name}\n${r.description}${r.drawback ? `\nただし：${r.drawback}` : ''}`, this.jar.top + 90);
+      });
+      this.tweens.add({ targets: img, angle: { from: -3, to: 3 }, duration: 1800 + i * 130, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+      c.add([cord, img]);
+    });
+    if (ids.length > slots.length) c.add(txt(this, 628, top + 450, `ほか${ids.length - slots.length}個`, 20, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 4 }));
+    this.relicShelf = c;
+  }
+
+  /** 黒いカプセル：封じられたカプセルが出て、縁起物を 3 つから 1 つ選べる */
+  private blackCapsule() {
+    const s = S();
+    const out = this.machine.outlet;
+    this.machine.react(4);
+    this.machine.setInputEnabled(false);
+    sfx.play('rumble', { rate: 1.2 });
+    this.cameras.main.shake(300, 0.006);
+    const dim = this.add.rectangle(GAME_W / 2, GAME_H / 2, GAME_W, GAME_H, PAL.ink, 0).setDepth(2500);
+    this.tweens.add({ targets: dim, fillAlpha: 0.6, duration: 500 });
+    const cap = this.add.image(out.x, out.y, 'cap_black').setDepth(2600).setScale(0.6);
+    const cy = GAME_H / 2;
+    stamp(this, 360, cy - 160, '黒いカプセル…!?', 44, CSS.cream, { hold: 900, depth: 2700 });
+    this.tweens.chain({
+      targets: cap,
+      tweens: [
+        { x: 360, y: cy, scale: 1.8, duration: 500, ease: 'Back.easeOut' },
+        { angle: { from: -8, to: 8 }, duration: 60, yoyo: true, repeat: 7 },
+      ],
+      onComplete: () => {
+        sfx.play('paka', { rate: 0.8 });
+        sfx.play('stamp');
+        this.sparks.setParticleTint(PAL.mustard);
+        this.sparks.explode(30, 360, cy);
+        cap.destroy();
+        showRelicPicker(this, {
+          heading: '縁起物が出てきた！',
+          sub: 'ひとつだけ持っていける',
+          relics: rollRelics(s, 3, ['common', 'rare']),
+          onDone: (r) => {
+            if (r) addRelic(s, r.id);
+            this.tweens.add({ targets: dim, alpha: 0, duration: 250, onComplete: () => dim.destroy() });
+            this.machine.setInputEnabled(true);
+            this.refreshUI();
+            save();
+          },
+        });
+      },
+    });
+  }
+
   // ---------- 行動 ----------
 
   private explainDenied(kind: 'sell' | 'baito') {
     const s = S();
-    if (kind === 'sell' && s.ap >= BALANCE.apCost.sell && inventoryCount(s) === 0) {
+    if (kind === 'sell' && s.ap >= sellApCost(s) && inventoryCount(s) === 0) {
       toast(this, '売る景品がない！\nカプセルをタップして開けよう', this.jar.top + 90);
     } else {
       toast(this, 'AP（提灯）が足りない…\n今日は閉店しよう', this.jar.top + 90);
@@ -761,7 +872,7 @@ export class ShopScene extends Phaser.Scene {
 
   private goMarket() {
     const s = S();
-    s.ap -= BALANCE.apCost.sell;
+    s.ap -= sellApCost(s);
     this.leaveTo('Market');
   }
 
@@ -810,7 +921,7 @@ export class ShopScene extends Phaser.Scene {
     // 高騰中のシリーズがあれば朝いちばんに知らせる
     const hot = SERIES.filter((se) => s.market.series[se.id].trend >= 1.8).map((se) => se.name);
     const sub = payday
-      ? `今日は返済日！ 閉店後に ${s.quota.toLocaleString('ja-JP')} 返済`
+      ? `今日は返済日！ 閉店後に ${dueAmount(s).toLocaleString('ja-JP')} 返済`
       : hot.length > 0
         ? `🔥 ${hot.join('・')} が高騰中！`
         : `第${s.week}週 ・ 返済まで あと${daysUntilPayday(s)}日`;
