@@ -5,7 +5,7 @@ import Phaser from 'phaser';
 import { BOTTOM, CSS, GAME_H, GAME_W, PAL } from '../config';
 import { sfx } from '../core/audio';
 import { fmt } from '../core/util';
-import { PRIZE_BY_ID, SERIES } from '../data/prizes';
+import { parseStock, SERIES, SHINY_MULT } from '../data/prizes';
 import { RARITY_INFO } from '../data/rarity';
 import { estimateSellTotal, saturationOf, sellOne, sellPrice, trendSign, type SeriesMarket } from '../game/market';
 import { S, save } from '../game/state';
@@ -193,8 +193,8 @@ export class MarketScene extends Phaser.Scene {
     return Object.keys(inv)
       .filter((id) => inv[id] > 0)
       .sort((a, b) => {
-        const pa = PRIZE_BY_ID[a];
-        const pb = PRIZE_BY_ID[b];
+        const pa = parseStock(a).prize;
+        const pb = parseStock(b).prize;
         return RARITY_INFO[pb.rarity].index - RARITY_INFO[pa.rarity].index || pa.seriesId.localeCompare(pb.seriesId) || a.localeCompare(b);
       });
   }
@@ -208,7 +208,7 @@ export class MarketScene extends Phaser.Scene {
       this.list.add(txt(this, 360, 120, 'ショーケースは空っぽ…', 28, { color: CSS.sub }));
     }
     this.ids.forEach((id, i) => {
-      const p = PRIZE_BY_ID[id];
+      const { prize: p, shiny } = parseStock(id);
       const col = i % COLS;
       const row = Math.floor(i / COLS);
       const cx = A.x0 + col * (A.cellW + GAP) + A.cellW / 2;
@@ -222,7 +222,7 @@ export class MarketScene extends Phaser.Scene {
         shelf.fillRect(36, cy + (ITEM_Y + 104) * VIEW_SCALE + 10, 648, 3);
         this.list.add(shelf);
       }
-      const card = makePrizeView(this, p, { count: s.inventory[id] });
+      const card = makePrizeView(this, p, { count: s.inventory[id], shiny });
       card.setPosition(cx, cy).setScale(VIEW_SCALE);
       this.list.add(card);
       // 値動きの小札（シリーズ単位の矢印）
@@ -290,7 +290,7 @@ export class MarketScene extends Phaser.Scene {
   private openDetail(id: string, animate = true) {
     this.detail?.destroy();
     const s = S();
-    const p = PRIZE_BY_ID[id];
+    const { prize: p, shiny } = parseStock(id);
     const sm = s.market.series[p.seriesId];
     const have = s.inventory[id] ?? 0;
     if (have <= 0) {
@@ -305,8 +305,8 @@ export class MarketScene extends Phaser.Scene {
 
     const midY = GAME_H / 2;
     // 大きなカード
-    const card = makePrizeView(this, p, { count: have });
-    card.setPosition(360, midY - 260).setScale(0.95);
+    const card = makePrizeView(this, p, { count: have, shiny });
+    card.setPosition(360, midY - 300).setScale(1.25);
     c.add(card);
 
     // 値札（紐でぶら下がる紙）
@@ -322,7 +322,7 @@ export class MarketScene extends Phaser.Scene {
     c.add(txt(this, 360, tagY - 22, '1個の売値', 22, { color: CSS.inkSoft }));
     c.add(txt(this, 360, tagY + 26, fmt(price), 64, { color: CSS.bad }));
     const sat = saturationOf(s.market, id);
-    const detailLine = `基準 ${fmt(p.basePrice)} × 相場 ${sm.trend.toFixed(2)} × 値崩れ ${sat.toFixed(2)}`;
+    const detailLine = `基準 ${fmt(p.basePrice)}${shiny ? ` × 色違い ${SHINY_MULT}` : ''} × 相場 ${sm.trend.toFixed(2)} × 値崩れ ${sat.toFixed(2)}`;
     c.add(txt(this, 360, tagY + 76, detailLine, 18, { color: CSS.inkSoft, bold: false }));
     // TODO(Phase 2): イベント係数・レリック補正の内訳表示
 
@@ -350,7 +350,7 @@ export class MarketScene extends Phaser.Scene {
     c.add([b1, b2, b3]);
     if (animate) {
       card.setScale(0.2).setAngle(-30);
-      this.tweens.add({ targets: card, scale: 0.95, angle: 0, duration: 260, ease: 'Back.easeOut' });
+      this.tweens.add({ targets: card, scale: 1.25, angle: 0, duration: 260, ease: 'Back.easeOut' });
       c.setAlpha(0);
       this.tweens.add({ targets: c, alpha: 1, duration: 140 });
     }

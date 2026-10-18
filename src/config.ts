@@ -53,6 +53,10 @@ export const BALANCE = {
   firstQuota: 500,
   quotaGrowth: 2.2,
   jarCapacity: 20,
+  /** 瓶をまぜられる回数（1 日あたり） */
+  shufflesPerDay: 3,
+  /** 色違いを作るのに必要な数 */
+  fuseMin: 3,
   saturationPerSale: 0.92,
   saturationRecovery: 0.5,
   trendMin: 0.3,

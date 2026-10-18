@@ -1,7 +1,7 @@
 // 相場。Phase 1 はトレンド係数と飽和係数のみ。
 // 売値 = basePrice × トレンド係数 × イベント係数 × 飽和係数 × レリック補正
 import { BALANCE } from '../config';
-import { PRIZE_BY_ID, SERIES } from '../data/prizes';
+import { parseStock, SERIES, SHINY_MULT } from '../data/prizes';
 import { clamp } from '../core/util';
 import { runHook } from './relics';
 import type { GameState } from './state';
@@ -145,11 +145,11 @@ export function saturationOf(m: MarketState, prizeId: string): number {
 
 /** 1 個あたりの現在の売値（小数を含む生値） */
 function rawPrice(state: GameState, prizeId: string, satOverride?: number): number {
-  const p = PRIZE_BY_ID[prizeId];
+  const { prize: p, shiny } = parseStock(prizeId);
   const trend = state.market.series[p.seriesId].trend;
   const event = 1; // TODO(Phase 2): イベント係数（TV紹介・生産終了・偽物・販売禁止）
   const sat = satOverride ?? saturationOf(state.market, prizeId);
-  const v = p.basePrice * trend * event * sat;
+  const v = p.basePrice * (shiny ? SHINY_MULT : 1) * trend * event * sat;
   return runHook(state, 'onSellPrice', v, { prizeId });
 }
 

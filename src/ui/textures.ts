@@ -1,13 +1,71 @@
 // 外部画像は使わず、起動時に Canvas でテクスチャを生成する。
 import Phaser from 'phaser';
 import { GAME_H, GAME_W } from '../config';
-import { PRIZES } from '../data/prizes';
+import { PRIZE_BY_ID, PRIZES } from '../data/prizes';
 import { RARITIES, RARITY_INFO, type Rarity } from '../data/rarity';
 import { INK, inkStroke, paintDuskBg, rr } from './art';
 import { drawItem, ITEM_H, ITEM_W } from './items';
 
 export const capsuleKey = (r: Rarity) => `cap_${r}`;
 export const itemKey = (prizeId: string) => `item_${prizeId}`;
+
+/** 色相を回す（CSS の hue-rotate と同じ行列）。輪郭の墨色はほぼそのまま残る */
+function hueRotate(img: ImageData, deg: number, sat = 1.25) {
+  const a = (deg * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  const m = [
+    0.213 + c * 0.787 - s * 0.213, 0.715 - c * 0.715 - s * 0.715, 0.072 - c * 0.072 + s * 0.928,
+    0.213 - c * 0.213 + s * 0.143, 0.715 + c * 0.285 + s * 0.14, 0.072 - c * 0.072 - s * 0.283,
+    0.213 - c * 0.213 - s * 0.787, 0.715 - c * 0.715 + s * 0.715, 0.072 + c * 0.928 + s * 0.072,
+  ];
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3] === 0) continue;
+    const r = d[i];
+    const g = d[i + 1];
+    const b = d[i + 2];
+    let nr = m[0] * r + m[1] * g + m[2] * b;
+    let ng = m[3] * r + m[4] * g + m[5] * b;
+    let nb = m[6] * r + m[7] * g + m[8] * b;
+    const l = (nr + ng + nb) / 3;
+    nr = l + (nr - l) * sat;
+    ng = l + (ng - l) * sat;
+    nb = l + (nb - l) * sat;
+    d[i] = nr < 0 ? 0 : nr > 255 ? 255 : nr;
+    d[i + 1] = ng < 0 ? 0 : ng > 255 ? 255 : ng;
+    d[i + 2] = nb < 0 ? 0 : nb > 255 ? 255 : nb;
+  }
+}
+
+/** 色違いグッズのテクスチャ（必要になったときに作る） */
+export function shinyItemKey(scene: Phaser.Scene, prizeId: string): string {
+  const key = `item_${prizeId}_s`;
+  canvasTex(scene, key, ITEM_W, ITEM_H, (c) => {
+    drawItem(c, PRIZE_BY_ID[prizeId]);
+    const img = c.getImageData(0, 0, ITEM_W, ITEM_H);
+    hueRotate(img, 150);
+    c.putImageData(img, 0, 0);
+    // 金のきらめき
+    for (const [x, y, r] of [
+      [26, 30, 12],
+      [ITEM_W - 24, 46, 9],
+      [30, ITEM_H - 40, 8],
+      [ITEM_W - 30, ITEM_H - 30, 13],
+    ]) {
+      c.beginPath();
+      c.moveTo(x, y - r);
+      c.quadraticCurveTo(x + r * 0.15, y - r * 0.15, x + r, y);
+      c.quadraticCurveTo(x + r * 0.15, y + r * 0.15, x, y + r);
+      c.quadraticCurveTo(x - r * 0.15, y + r * 0.15, x - r, y);
+      c.quadraticCurveTo(x - r * 0.15, y - r * 0.15, x, y - r);
+      c.fillStyle = '#f2c94c';
+      c.fill();
+      inkStroke(c, 2.5);
+    }
+  });
+  return key;
+}
 
 type C = CanvasRenderingContext2D;
 
@@ -157,6 +215,37 @@ export function makeTextures(scene: Phaser.Scene): void {
     g.addColorStop(1, 'rgba(255,255,255,0)');
     c.fillStyle = g;
     c.fillRect(0, 0, 128, 128);
+  });
+
+  // 色違いカプセルの金の輪
+  canvasTex(scene, 'shinyRing', 112, 112, (c) => {
+    c.setLineDash([14, 7]);
+    c.beginPath();
+    c.arc(56, 56, 49, 0, Math.PI * 2);
+    c.lineWidth = 11;
+    c.strokeStyle = INK;
+    c.stroke();
+    c.lineWidth = 7;
+    c.strokeStyle = '#f2c94c';
+    c.stroke();
+    c.setLineDash([]);
+    // 小さな星
+    for (const a of [0.3, 2.4, 4.4]) {
+      const x = 56 + Math.cos(a) * 49;
+      const y = 56 + Math.sin(a) * 49;
+      c.beginPath();
+      c.moveTo(x, y - 7);
+      c.lineTo(x + 2, y - 2);
+      c.lineTo(x + 7, y);
+      c.lineTo(x + 2, y + 2);
+      c.lineTo(x, y + 7);
+      c.lineTo(x - 2, y + 2);
+      c.lineTo(x - 7, y);
+      c.lineTo(x - 2, y - 2);
+      c.closePath();
+      c.fillStyle = '#fff6d0';
+      c.fill();
+    }
   });
 
   canvasTex(scene, 'ring', 128, 128, (c) => {

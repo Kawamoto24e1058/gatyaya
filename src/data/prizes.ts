@@ -91,3 +91,19 @@ export const SERIES_BY_ID: Record<string, Series> = Object.fromEntries(SERIES.ma
 export function prizesOf(seriesId: string, rarity: Rarity): Prize[] {
   return PRIZES.filter((p) => p.seriesId === seriesId && p.rarity === rarity);
 }
+
+// ---- 色違い（瓶の中で同じレア度のカプセルを 3 つ以上つないで作る） ----
+
+/** 色違いの売値倍率（TODO(balance)：3 つ分＋α） */
+export const SHINY_MULT = 3.6;
+const SHINY_SUFFIX = '*';
+
+/** 所持品のキー。色違いは末尾に * を付けて別枠で持つ */
+export function stockKey(prizeId: string, shiny: boolean): string {
+  return shiny ? prizeId + SHINY_SUFFIX : prizeId;
+}
+
+export function parseStock(key: string): { prize: Prize; shiny: boolean } {
+  const shiny = key.endsWith(SHINY_SUFFIX);
+  return { prize: PRIZE_BY_ID[shiny ? key.slice(0, -1) : key], shiny };
+}

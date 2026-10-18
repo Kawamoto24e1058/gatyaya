@@ -11,6 +11,10 @@ export type DayStats = {
   wages: number;
   /** 夜のうちに化けたカプセル数（その日の朝） */
   transforms: number;
+  /** 瓶をまぜた回数 */
+  shuffles: number;
+  /** 色違いを作った回数 */
+  fusions: number;
   opened: number;
   coinsAtStart: number;
 };
@@ -26,6 +30,8 @@ export type GameState = {
   machineId: string;
   /** 瓶の中のカプセル（位置は保存しない。再開時は上から降らせる） */
   jar: Rarity[];
+  /** jar と同じ並び。true は色違いカプセル */
+  jarShiny: boolean[];
   jarCapacityBase: number;
   /** バイト報酬など、その週だけ有効な瓶容量ボーナス */
   jarBonusWeek: number;
@@ -44,7 +50,7 @@ const SAVE_KEY = 'gatyaya.save.v1';
 const MUTE_KEY = 'gatyaya.mute';
 
 function freshDay(coins: number): DayStats {
-  return { pulls: 0, gachaSpent: 0, sales: 0, wages: 0, transforms: 0, opened: 0, coinsAtStart: coins };
+  return { pulls: 0, gachaSpent: 0, sales: 0, wages: 0, transforms: 0, shuffles: 0, fusions: 0, opened: 0, coinsAtStart: coins };
 }
 
 export function newGame(): GameState {
@@ -58,6 +64,7 @@ export function newGame(): GameState {
     quota: BALANCE.firstQuota,
     machineId: 'hand',
     jar: [],
+    jarShiny: [],
     jarCapacityBase: BALANCE.jarCapacity,
     jarBonusWeek: 0,
     inventory: {},
@@ -181,6 +188,9 @@ export function loadSave(): GameState | null {
     migrateMarket(s.market, s.day);
     // 合体廃止前のセーブを補う
     s.nightChanges ??= [];
+    s.jarShiny ??= s.jar.map(() => false);
+    s.today.shuffles ??= 0;
+    s.today.fusions ??= 0;
     s.today.transforms ??= 0;
     s.totals.transforms ??= 0;
     return s;

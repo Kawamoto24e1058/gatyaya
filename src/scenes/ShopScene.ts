@@ -4,7 +4,7 @@ import { BALANCE, BOTTOM, CSS, EXTRA_H, GAME_H, GAME_W, PAL } from '../config';
 import { sfx } from '../core/audio';
 import { pick, vibrate, weightedPick } from '../core/util';
 import { MACHINE_BY_ID, type GachaMachineDef } from '../data/machines';
-import { KIND_LABEL, prizesOf, SERIES, type Prize } from '../data/prizes';
+import { KIND_LABEL, prizesOf, SERIES, stockKey, type Prize } from '../data/prizes';
 import { RARITY_INFO, type Rarity } from '../data/rarity';
 import { Capsule } from '../game/Capsule';
 import { runHook } from '../game/relics';
@@ -39,6 +39,10 @@ export class ShopScene extends Phaser.Scene {
   private lastKnockAt = 0;
   private closeArmedUntil = 0;
   private revealing = 0;
+  private chain: Capsule[] = [];
+  private chainPtr: number | null = null;
+  private chainLine!: Phaser.GameObjects.Graphics;
+  private btnShuffle!: Button;
 
   constructor() {
     super('Shop');
@@ -49,6 +53,8 @@ export class ShopScene extends Phaser.Scene {
     this.capsules = [];
     this.closeArmedUntil = 0;
     this.revealing = 0;
+    this.chain = [];
+    this.chainPtr = null;
 
     // ---- レイアウト（縦長端末では余白を機械の上と瓶に配分） ----
     const top = Hud.bottom();
@@ -95,14 +101,22 @@ export class ShopScene extends Phaser.Scene {
     this.buildButtons();
 
     // 保存済みのカプセルを上から降らせる
-    S().jar.forEach((r, i) => {
+    const saved = [...S().jar];
+    const savedShiny = [...S().jarShiny];
+    S().jar = [];
+    S().jarShiny = [];
+    saved.forEach((r, i) => {
       this.time.delayedCall(i * 70, () => {
-        this.spawnCapsule(Phaser.Math.Between(this.jar.left + 60, this.jar.right - 60), this.jar.top + 10, r, 0, 2);
+        this.spawnCapsule(Phaser.Math.Between(this.jar.left + 60, this.jar.right - 60), this.jar.top + 10, r, 0, 2, savedShiny[i] ?? false);
         this.refreshUI(false);
       });
     });
 
     this.matter.world.on('collisionstart', this.onCollision, this);
+    this.chainLine = this.add.graphics().setDepth(205);
+    this.input.on('pointermove', this.onChainMove, this);
+    this.input.on('pointerup', this.onChainUp, this);
+    this.input.on('pointerupoutside', this.onChainUp, this);
 
     this.events.on(Phaser.Scenes.Events.WAKE, this.onWake, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -164,6 +178,16 @@ export class ShopScene extends Phaser.Scene {
     drawPlate(lbl, J.left + 6, J.top + 14, 136, 40, PAL.paper, { radius: 8, shadow: 4, outline: 4, shine: false });
     this.jarLabel = txt(this, J.left + 74, J.top + 34, '', 24, { color: CSS.ink }).setDepth(221);
 
+    this.btnShuffle = new Button(this, 360, J.top + 34, {
+      w: 170,
+      h: 48,
+      color: PAL.teal,
+      label: 'まぜる',
+      size: 24,
+      onPress: () => this.shuffleJar(),
+      onDenied: () => toast(this, '今日はもうまぜられない（1日3回まで）', this.jar.top + 90),
+    }).setDepth(230);
+
     this.invIcon = this.add.container(J.right - 74, J.top + 34).setDepth(220);
     const ig = this.add.graphics();
     drawPlate(ig, -68, -20, 136, 40, PAL.paper, { radius: 8, shadow: 4, outline: 4, shine: false });
@@ -175,7 +199,7 @@ export class ShopScene extends Phaser.Scene {
     this.invLabel = txt(this, 14, 0, '', 24, { color: CSS.ink });
     this.invIcon.add([ig, this.invLabel]);
 
-    this.emptyHint = txt(this, 360, (J.top + J.bottom) / 2 + 20, 'ハンドルを回してカプセルを出そう\nカプセルはタップで開封\n開けずに寝かせると、夜のうちに化けることも…', 26, {
+    this.emptyHint = txt(this, 360, (J.top + J.bottom) / 2 + 20, 'ハンドルを回してカプセルを出そう\nカプセルはタップで開封\n同じ色を3つなぞると色違いに！', 26, {
       color: CSS.cream,
       stroke: CSS.ink,
       strokeThickness: 6,
@@ -232,6 +256,9 @@ export class ShopScene extends Phaser.Scene {
     this.btnSell.setEnabled(s.ap >= BALANCE.apCost.sell && inventoryCount(s) > 0);
     this.btnBaito.setEnabled(s.ap >= BALANCE.apCost.baito);
     this.btnClose.setPulse(s.ap === 0);
+    const left = BALANCE.shufflesPerDay - s.today.shuffles;
+    this.btnShuffle.setLabel(`まぜる ${left}`);
+    this.btnShuffle.setEnabled(left > 0 && this.capsules.length > 1);
   }
 
   // ---------- ガチャ ----------
@@ -302,11 +329,11 @@ export class ShopScene extends Phaser.Scene {
     if (!s.totals.bestRarity || RARITY_INFO[r].index > RARITY_INFO[s.totals.bestRarity].index) s.totals.bestRarity = r;
   }
 
-  private spawnCapsule(x: number, y: number, r: Rarity, vx = 0, vy = 0): Capsule {
-    const c = new Capsule(this, x, y, r);
+  private spawnCapsule(x: number, y: number, r: Rarity, vx = 0, vy = 0, shiny = false): Capsule {
+    const c = new Capsule(this, x, y, r, shiny);
     c.setVelocity(vx, vy);
     c.setAngularVelocity(Phaser.Math.FloatBetween(-0.08, 0.08));
-    c.on('pointerdown', () => this.openCapsule(c));
+    c.on('pointerdown', (p: Phaser.Input.Pointer) => this.onCapsuleDown(c, p));
     this.capsules.push(c);
     this.syncJar();
     return c;
@@ -320,6 +347,135 @@ export class ShopScene extends Phaser.Scene {
 
   private syncJar() {
     S().jar = this.capsules.map((c) => c.rarity);
+    S().jarShiny = this.capsules.map((c) => c.shiny);
+  }
+
+  // ---------- なぞって色違いを作る（ツムツム風） ----------
+
+  private onCapsuleDown(c: Capsule, p: Phaser.Input.Pointer) {
+    if (c.busy || !c.active || this.chainPtr !== null) return;
+    this.chainPtr = p.id;
+    this.chain = [c];
+    c.setMarked(true);
+  }
+
+  private hitCapsule(x: number, y: number): Capsule | undefined {
+    return this.capsules.find((c) => c.active && !c.busy && Phaser.Math.Distance.Between(x, y, c.x, c.y) < RARITY_INFO[c.rarity].radius + 6);
+  }
+
+  private onChainMove(p: Phaser.Input.Pointer) {
+    if (p.id !== this.chainPtr) return;
+    const chain = this.chain;
+    const last = chain[chain.length - 1];
+    const hit = this.hitCapsule(p.worldX, p.worldY);
+    if (!hit || hit === last) return;
+    // ひとつ前に戻ったら最後を外す
+    if (chain.length >= 2 && hit === chain[chain.length - 2]) {
+      last.setMarked(false);
+      chain.pop();
+      sfx.play('tick', { rate: 0.8 });
+      return;
+    }
+    if (chain.includes(hit) || hit.shiny || chain[0].shiny || hit.rarity !== chain[0].rarity) return;
+    const reach = RARITY_INFO[last.rarity].radius + RARITY_INFO[hit.rarity].radius + 40;
+    if (Phaser.Math.Distance.Between(last.x, last.y, hit.x, hit.y) > reach) return;
+    chain.push(hit);
+    hit.setMarked(true);
+    sfx.play('pop', { rate: 0.8 + chain.length * 0.12, vol: 0.7 });
+    vibrate(6);
+  }
+
+  private onChainUp(p: Phaser.Input.Pointer) {
+    if (p.id !== this.chainPtr) return;
+    const chain = this.chain;
+    this.chainPtr = null;
+    this.chain = [];
+    this.chainLine.clear();
+    for (const c of chain) if (c.active) c.setMarked(false);
+    if (chain.length >= BALANCE.fuseMin) this.fuse(chain);
+    else if (chain.length === 1) this.openCapsule(chain[0]);
+    else {
+      sfx.play('buzz', { vol: 0.4 });
+      toast(this, `同じ色を ${BALANCE.fuseMin} つ以上つなぐと色違いに！`, this.jar.top + 90);
+    }
+  }
+
+  private drawChain() {
+    const g = this.chainLine;
+    g.clear();
+    if (this.chain.length < 2) return;
+    for (const [w, col] of [
+      [16, PAL.ink],
+      [8, PAL.mustard],
+    ] as const) {
+      g.lineStyle(w, col, 1);
+      g.beginPath();
+      g.moveTo(this.chain[0].x, this.chain[0].y);
+      for (const c of this.chain.slice(1)) g.lineTo(c.x, c.y);
+      g.strokePath();
+    }
+  }
+
+  /** つないだカプセルを 1 つの色違いカプセルにまとめる（レア度は上がらない） */
+  private fuse(chain: Capsule[]) {
+    const s = S();
+    const target = chain[chain.length - 1];
+    const { x, y } = target;
+    const r = target.rarity;
+    for (const c of chain) {
+      c.busy = true;
+      c.setStatic(true);
+    }
+    for (const c of chain) {
+      if (c !== target) this.tweens.add({ targets: c, x, y, duration: 180, ease: 'Quad.easeIn' });
+    }
+    sfx.play('whoosh', { rate: 1.4 });
+    this.time.delayedCall(200, () => {
+      for (const c of chain) this.removeCapsule(c);
+      const nc = this.spawnCapsule(x, y, r, 0, -6, true);
+      nc.setScale(0.5);
+      this.tweens.add({ targets: nc, scale: 1, duration: 300, ease: 'Back.easeOut' });
+      const info = RARITY_INFO[r];
+      sfx.play('pop', { rate: 0.9 + info.index * 0.1 });
+      sfx.play('sparkle', { delay: 0.05 });
+      vibrate(20);
+      const ring = this.add.image(x, y, 'ring').setTint(PAL.mustard).setDepth(300).setScale((info.radius * 2) / 128);
+      this.tweens.add({ targets: ring, scale: (info.radius * 2 * 3) / 128, alpha: 0, duration: 480, ease: 'Cubic.easeOut', onComplete: () => ring.destroy() });
+      this.sparks.setParticleTint(PAL.mustard);
+      this.sparks.explode(16 + chain.length * 3, x, y);
+      const sx = Phaser.Math.Clamp(x, 170, GAME_W - 170);
+      const sy = Phaser.Math.Clamp(y - 80, this.jar.top + 110, this.jar.bottom - 100);
+      stamp(this, sx, sy, chain.length > BALANCE.fuseMin ? `${chain.length}つ合成！ 色違い` : '色違い！', 34, CSS.gold, { hold: 600, depth: 450 });
+      // 4 つ以上つないだらおまけのコイン
+      const extra = chain.length - BALANCE.fuseMin;
+      if (extra > 0) {
+        const bonus = extra * 5 * (info.index + 1); // TODO(balance)
+        s.coins += bonus;
+        sfx.play('coin', { delay: 0.15 });
+        const ct = this.hud.coinTarget();
+        floatText(this, ct.x + 120, ct.y + 30, `+${bonus}`, CSS.gold, 28);
+      }
+      s.today.fusions += 1;
+      this.refreshUI();
+      save();
+    });
+  }
+
+  // ---------- まぜる ----------
+
+  private shuffleJar() {
+    const s = S();
+    s.today.shuffles += 1;
+    sfx.play('whoosh', { rate: 0.8 });
+    this.cameras.main.shake(260, 0.004);
+    for (const c of this.capsules) {
+      if (c.busy || !c.active) continue;
+      c.setVelocity(Phaser.Math.FloatBetween(-8, 8), Phaser.Math.FloatBetween(-17, -9));
+      c.setAngularVelocity(Phaser.Math.FloatBetween(-0.3, 0.3));
+    }
+    for (let k = 0; k < 5; k++) this.time.delayedCall(120 + k * 90, () => sfx.play('knock', { rate: 0.9 + Math.random() * 0.4 }));
+    this.refreshUI();
+    save();
   }
 
   // ---------- ぶつかる音 ----------
@@ -374,8 +530,8 @@ export class ShopScene extends Phaser.Scene {
   /** 同じ位置・同じ並び順のまま、別レア度のカプセルに差し替える */
   private replaceCapsule(c: Capsule, r: Rarity): Capsule {
     const i = this.capsules.indexOf(c);
-    const nc = new Capsule(this, c.x, c.y, r);
-    nc.on('pointerdown', () => this.openCapsule(nc));
+    const nc = new Capsule(this, c.x, c.y, r, c.shiny);
+    nc.on('pointerdown', (p: Phaser.Input.Pointer) => this.onCapsuleDown(nc, p));
     nc.setVelocity(0, -5);
     nc.setScale(0.6);
     this.tweens.add({ targets: nc, scale: 1, duration: 280, ease: 'Back.easeOut' });
@@ -481,9 +637,10 @@ export class ShopScene extends Phaser.Scene {
 
     const prize = this.rollPrize(c.rarity);
     this.removeCapsule(c);
-    s.inventory[prize.id] = (s.inventory[prize.id] ?? 0) + 1;
+    const stock = stockKey(prize.id, c.shiny);
+    s.inventory[stock] = (s.inventory[stock] ?? 0) + 1;
     s.today.opened += 1;
-    this.revealItem(prize, x, y);
+    this.revealItem(prize, x, y, c.shiny);
     this.refreshUI();
     save();
   }
@@ -495,7 +652,7 @@ export class ShopScene extends Phaser.Scene {
   }
 
   /** グッズがくるくる回りながら飛び出し、着地して名札が付く */
-  private revealItem(p: Prize, x: number, y: number) {
+  private revealItem(p: Prize, x: number, y: number, shiny = false) {
     const info = RARITY_INFO[p.rarity];
     const J = this.jar;
     const n = this.revealing++;
@@ -504,7 +661,7 @@ export class ShopScene extends Phaser.Scene {
     const base = Math.min(0.95, (J.bottom - J.top - 20) / VIEW_H);
 
     const root = this.add.container(x, y).setDepth(600 + n).setScale(0.15);
-    const view = makePrizeView(this, p);
+    const view = makePrizeView(this, p, { shiny });
     const tag = view.getByName('tag') as Phaser.GameObjects.Container;
     tag.setScale(0);
     root.add(view);
@@ -549,10 +706,11 @@ export class ShopScene extends Phaser.Scene {
             sfx.play('knock', { rate: 0.7 });
             this.tweens.add({ targets: root, scaleY: base * 0.86, duration: 70, yoyo: true });
             this.tweens.add({ targets: tag, scale: 1, duration: 220, ease: 'Back.easeOut', delay: 60 });
-            if (info.index >= 2) {
+            if (info.index >= 2 || shiny) {
               sfx.play('sparkle', { rate: 0.95 + info.index * 0.03 });
-              twinkle(this, view, info.index);
+              twinkle(this, view, Math.max(2, info.index));
             }
+            if (shiny && info.index < 3) stamp(this, cx, cy - 210 * base, '色違い！', 40, CSS.gold, { hold: hold - 150 });
             if (rays) this.tweens.add({ targets: rays, scale: 1.4, rotation: 1, duration: hold + 300 });
             if (info.index >= 3) {
               // 鑑定書つき
@@ -689,6 +847,7 @@ export class ShopScene extends Phaser.Scene {
   }
 
   update() {
+    this.drawChain();
     for (const c of this.capsules) {
       c.syncGlow();
       // 万一すり抜けたら瓶へ戻す
