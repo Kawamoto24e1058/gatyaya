@@ -4,7 +4,7 @@ import { BALANCE } from '../config';
 import { parseStock, SERIES, SHINY_MULT } from '../data/prizes';
 import { rarityAtLeast, type Rarity } from '../data/rarity';
 import { clamp } from '../core/util';
-import { DARK_CATCH_RATE, DARK_FINE_RATE, DARK_PRICE_RATE, eventMult, isBanned } from './events';
+import { DARK_CATCH_RATE, DARK_FINE_RATE, DARK_PRICE_RATE, dayEvent, eventMult, isBanned } from './events';
 import { runHook } from './relics';
 import type { GameState } from './state';
 
@@ -192,7 +192,8 @@ function rawPrice(state: GameState, prizeId: string, satOverride?: number, ignor
   const event = eventMult(state, p.seriesId);
   const sat = satOverride ?? saturationOf(state.market, prizeId);
   const order = !ignoreOrder && matchesOrder(state, prizeId) ? state.market.order!.mult : 1;
-  const v = p.basePrice * (shiny ? SHINY_MULT : 1) * trend * event * sat * order * (1 + (state.sellBonusWeek ?? 0));
+  const day = dayEvent(state)?.sell ?? 1;
+  const v = p.basePrice * (shiny ? SHINY_MULT : 1) * trend * event * sat * order * day * (1 + (state.sellBonusWeek ?? 0));
   return runHook(state, 'onSellPrice', v, { prizeId });
 }
 

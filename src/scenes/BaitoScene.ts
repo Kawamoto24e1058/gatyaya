@@ -4,6 +4,7 @@ import { BALANCE, BOTTOM, CSS, GAME_H, GAME_W, PAL } from '../config';
 import { sfx } from '../core/audio';
 import { fmt } from '../core/util';
 import { rollRelics, runHook } from '../game/relics';
+import { dayEvent } from '../game/events';
 import { addRelic, S, save } from '../game/state';
 import { upBaitoMult } from '../game/upgrades';
 import { MINIGAME_BY_ID, pickBoard } from '../minigames/registry';
@@ -189,7 +190,7 @@ export class BaitoScene extends Phaser.Scene {
     const s = S();
     // 縁起物でバイト代が増減する
     const fatigue = fatigueMult(s.today.baitos - 1);
-    result.coins = Math.round(runHook(s, 'onBaito', result.coins) * upBaitoMult(s) * fatigue);
+    result.coins = Math.round(runHook(s, 'onBaito', result.coins) * upBaitoMult(s) * fatigue * (dayEvent(s)?.baito ?? 1));
     if (fatigue < 1) result.summary = `${result.summary ?? ''}\n疲れていたので給料 ×${fatigue}`;
     s.coins += result.coins;
     s.today.wages += result.coins;

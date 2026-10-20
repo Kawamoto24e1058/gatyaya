@@ -6,7 +6,7 @@ import { pick } from '../core/util';
 import { runHook } from './relics';
 import type { GameState } from './state';
 
-export type EventType = 'tv' | 'discontinued' | 'fake' | 'ban' | 'frenzy';
+export type EventType = 'tv' | 'discontinued' | 'fake' | 'ban' | 'frenzy' | 'collab' | 'streamer' | 'recall' | 'restock';
 
 export type EventDef = {
   type: EventType;
@@ -68,6 +68,46 @@ export const EVENT_DEFS: Record<EventType, EventDef> = {
     rumor: (s) => `「${s}」がとんでもない大ブームになるかも…!?`,
     news: (s) => `💰 ${s}が大ブーム！ 今日だけ値段が跳ね上がった！`,
   },
+  collab: {
+    type: 'collab',
+    name: 'コラボ決定',
+    icon: '🤝',
+    days: 3,
+    mult: () => 1.5 + Math.random() * 0.3,
+    weight: 2,
+    rumor: (s) => `「${s}」が何かとコラボするらしい`,
+    news: (s) => `🤝 ${s}のコラボが決定！ しばらく人気`,
+  },
+  streamer: {
+    type: 'streamer',
+    name: '配信で話題',
+    icon: '📱',
+    days: 1,
+    mult: () => 2.2 + Math.random() * 1.2,
+    weight: 2,
+    rumor: (s) => `人気の配信者が「${s}」を集めているらしい`,
+    news: (s) => `📱 ${s}が配信で話題に！ 今日だけ高値`,
+  },
+  recall: {
+    type: 'recall',
+    name: '回収騒ぎ',
+    icon: '📦',
+    days: 2,
+    mult: () => 0.5,
+    weight: 1.5,
+    rumor: (s) => `「${s}」に不具合が見つかったとか…`,
+    news: (s) => `📦 ${s}が回収騒ぎ。買い手が渋っている`,
+  },
+  restock: {
+    type: 'restock',
+    name: '大量再販',
+    icon: '🏪',
+    days: 3,
+    mult: () => 0.65,
+    weight: 1.5,
+    rumor: (s) => `「${s}」が大量に再販されるらしい`,
+    news: (s) => `🏪 ${s}が大量再販。値段が下がっている`,
+  },
   ban: {
     type: 'ban',
     name: '販売禁止',
@@ -80,6 +120,43 @@ export const EVENT_DEFS: Record<EventType, EventDef> = {
   },
 };
 
+// ---- 今日の出来事（店全体にかかる 1 日だけの出来事） ----
+
+export type DayEventDef = {
+  id: string;
+  name: string;
+  news: string;
+  /** ガチャ代の倍率 */
+  gacha?: number;
+  /** 売値の倍率 */
+  sell?: number;
+  /** バイト代の倍率 */
+  baito?: number;
+  /** 今日の AP 追加 */
+  ap?: number;
+  /** 今夜は化けやすい */
+  night?: boolean;
+  /** 縁起物ガチャの値段の倍率 */
+  relicGacha?: number;
+};
+
+// TODO(balance)
+export const DAY_EVENTS: DayEventDef[] = [
+  { id: 'fukunohi', name: '福の日', news: '🎍 今日は福の日！ ガチャ代が半額', gacha: 0.5 },
+  { id: 'ennichi', name: '縁日', news: '🏮 近くで縁日！ 人出が多くて売値 ×1.3', sell: 1.3 },
+  { id: 'rain', name: '長雨', news: '☔ 長雨で客足が遠のく…売値 ×0.8。代わりにバイト代 ×1.3', sell: 0.8, baito: 1.3 },
+  { id: 'cock', name: '一番鶏', news: '🐓 一番鶏で早起きできた！ 今日は AP +1', ap: 1 },
+  { id: 'hyakki', name: '百鬼夜行', news: '👹 今夜は百鬼夜行…カプセルが化けやすい', night: true },
+  { id: 'payday', name: '町の給料日', news: '💴 町の給料日！ バイト代 ×1.5', baito: 1.5 },
+  { id: 'priceup', name: '値上げの波', news: '📈 物価高でガチャ代 ×1.3、売値も ×1.15', gacha: 1.3, sell: 1.15 },
+  { id: 'shrine', name: '神社の大祭', news: '⛩ 神社の大祭。縁起物ガチャが半額', relicGacha: 0.5 },
+];
+const DAY_EVENT_CHANCE = 0.35;
+
+export function dayEvent(s: GameState): DayEventDef | undefined {
+  return DAY_EVENTS.find((d) => d.id === s.events.today);
+}
+
 export type ActiveEvent = { type: EventType; seriesId: string; until: number; mult: number };
 export type ScheduledEvent = { type: EventType; seriesId: string; startDay: number };
 export type Rumor = { text: string };
@@ -89,6 +166,8 @@ export type EventState = {
   scheduled: ScheduledEvent[];
   /** 今朝の瓦版 */
   rumors: Rumor[];
+  /** 今日の出来事（DAY_EVENTS の id） */
+  today?: string;
   /** 今朝始まったイベントの告知 */
   news: string[];
 };
@@ -148,6 +227,15 @@ export function advanceEvents(s: GameState): void {
   }
   ev.scheduled = ev.scheduled.filter((x) => x.startDay > day);
 
+  // 今日の出来事
+  ev.today = undefined;
+  if (Math.random() < DAY_EVENT_CHANCE) {
+    const d = pick(DAY_EVENTS);
+    ev.today = d.id;
+    ev.news.push(d.news);
+    if (d.night) s.nightBoost = true;
+  }
+
   const accuracy = Math.min(0.95, runHook(s, 'onRumorAccuracy', BASE_ACCURACY));
   const rumors: Rumor[] = [];
   // 新しいイベントの予定（2〜3 日後）
@@ -164,7 +252,7 @@ export function advanceEvents(s: GameState): void {
   // ガセの噂（全体の的中率が accuracy 前後になるように混ぜる）
   const falseRate = EVENT_CHANCE_PER_DAY * TRUE_RUMOR_RATE * ((1 - accuracy) / accuracy);
   if (Math.random() < falseRate) {
-    const type = pick<EventType>(['tv', 'fake', 'discontinued']); // 販売禁止のガセは流さない
+    const type = pick<EventType>(['tv', 'fake', 'discontinued', 'collab', 'streamer', 'recall', 'restock']); // 販売禁止のガセは流さない
     rumors.push({ text: EVENT_DEFS[type].rumor(pick(SERIES).name) });
   }
   // 値動きのヒント

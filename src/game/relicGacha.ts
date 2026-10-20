@@ -1,5 +1,6 @@
 // 縁起物ガチャ：店の奥の暗がりにいる「何か」が回させてくれる。コインで 1 日 1 回。
 import { RELICS, type Relic, type RelicRarity } from './relics';
+import { dayEvent } from './events';
 import type { GameState } from './state';
 
 // TODO(balance)：値段はその週のノルマに比例し（1 週目 150 → 5 週目 2,400）、同じ週に回すたびに倍になる
@@ -11,7 +12,7 @@ export const RELIC_GACHA = {
 
 export function relicGachaPrice(s: GameState): number {
   const base = Math.max(RELIC_GACHA.minPrice, Math.round((s.quota * RELIC_GACHA.priceRate) / 10) * 10);
-  return base * 2 ** s.relicGachaWeek;
+  return Math.round(base * 2 ** s.relicGachaWeek * (dayEvent(s)?.relicGacha ?? 1));
 }
 
 function pool(s: GameState): Relic[] {

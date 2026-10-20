@@ -5,13 +5,13 @@ import { sfx } from '../core/audio';
 import { pick, vibrate, weightedPick } from '../core/util';
 import { MACHINE_BY_ID, type GachaMachineDef } from '../data/machines';
 import { KIND_LABEL, prizesOf, SERIES, stockKey, type Prize } from '../data/prizes';
-import { RARITY_INFO, type Rarity } from '../data/rarity';
+import { RARITIES, RARITY_INFO, type Rarity } from '../data/rarity';
 import { Capsule } from '../game/Capsule';
 import { adjustedSeriesWeights } from '../game/events';
 import { planFusion } from '../game/fusion';
 import { RELIC_BY_ID, rollRelics, runHook } from '../game/relics';
 import { pullRelicGacha, RELIC_GACHA, relicGachaBlocked, relicGachaPrice } from '../game/relicGacha';
-import { upAttract, upRapid, upRarityWeights, upStirInterval, upTwinChance } from '../game/upgrades';
+import { upAttract, upAutoCrank, upAutoFuse, upAutoOpen, upRapid, upRarityWeights, upStirInterval, upTwinChance } from '../game/upgrades';
 import { showKawaraban } from '../ui/Kawaraban';
 import { Coach } from '../ui/Coach';
 import { tilt } from '../core/tilt';
@@ -78,6 +78,8 @@ export class ShopScene extends Phaser.Scene {
   private keys?: Phaser.Types.Input.Keyboard.CursorKeys;
   private shelfKey: string | null = null;
   private nextStirAt = 0;
+  private nextAuto = { crank: 0, open: 0, fuse: 0 };
+  private autoSign?: Phaser.GameObjects.Container;
   private clusterSince = new Map<Capsule, number>();
   private lastClusterCheck = 0;
   private btnShuffle!: Button;
@@ -94,6 +96,8 @@ export class ShopScene extends Phaser.Scene {
     this.clusterSince = new Map();
     this.lastClusterCheck = 0;
     this.relicShelf = undefined;
+    this.autoSign = undefined;
+    this.nextAuto = { crank: 0, open: 0, fuse: 0 };
     this.shelfKey = null;
 
     // ---- レイアウト（縦長端末では余白を機械の上と瓶に配分） ----
@@ -295,6 +299,7 @@ export class ShopScene extends Phaser.Scene {
   private refreshUI(animateHud = true) {
     const s = S();
     this.hud.refresh(animateHud);
+    this.renderAutoSign();
     const full = this.capsules.length >= jarCapacity(s);
     this.jarLabel.setText(`瓶 ${this.capsules.length}/${jarCapacity(s)}`);
     this.jarLabel.setColor(full ? CSS.bad : CSS.ink);
@@ -423,6 +428,7 @@ export class ShopScene extends Phaser.Scene {
 
   private spawnCapsule(x: number, y: number, r: Rarity, vx = 0, vy = 0, shiny = false): Capsule {
     const c = new Capsule(this, x, y, r, shiny);
+    c.setData('born', this.time.now);
     c.setVelocity(vx, vy);
     c.setAngularVelocity(Phaser.Math.FloatBetween(-0.08, 0.08));
     c.on('pointerdown', () => this.openCapsule(c));
@@ -558,6 +564,72 @@ export class ShopScene extends Phaser.Scene {
     for (let k = 0; k < 5; k++) this.time.delayedCall(120 + k * 90, () => sfx.play('knock', { rate: 0.9 + Math.random() * 0.4 }));
     this.refreshUI();
     save();
+  }
+
+  /** 自動化の機材：自動ハンドル・自動開封機・合成からくり。ほかの画面が前面にある間は止める */
+  private autoMachines() {
+    const s = S();
+    if (this.machine.isInputEnabled && !this.machine.isInputEnabled()) return;
+    if (this.restoreQueue.length > 0) return;
+    const now = this.time.now;
+    const due = (key: 'crank' | 'open' | 'fuse', every: number) => {
+      if (every <= 0) return false;
+      if (this.nextAuto[key] === 0) this.nextAuto[key] = now + every * 1000;
+      if (now < this.nextAuto[key]) return false;
+      this.nextAuto[key] = now + every * 1000;
+      return true;
+    };
+    // 返済日は返済に足りる分を残す（自動で回してコインを使い切らないように）
+    const reserve = isPayday(s) ? dueAmount(s) : 0;
+    if (s.autoCrankOn && due('crank', upAutoCrank(s)) && this.canPull() === true && s.coins - pullCost(s, this.def.cost) >= reserve) {
+      this.machine.react(0);
+      sfx.play('gari', { rate: 1.2, vol: 0.5 });
+      this.pull();
+    }
+    const ao = upAutoOpen(s);
+    if (ao && due('open', ao.every)) {
+      // 出てすぐは開けない（合成や夜に化けるチャンスを残す）。合成からくりがあれば待ち時間を長めに
+      const wait = (upAutoFuse(s) > 0 ? 14 : 6) * 1000;
+      const c = this.capsules.find((x) => x.active && !x.busy && !x.shiny && ao.rarities.includes(x.rarity) && !this.clusterSince.has(x) && now - (x.getData('born') ?? 0) >= wait);
+      if (c) this.openCapsule(c);
+    }
+    if (due('fuse', upAutoFuse(s))) {
+      const pool = this.capsules.filter((x) => x.active && !x.busy && !x.shiny);
+      for (const r of RARITIES) {
+        const same = pool.filter((x) => x.rarity === r);
+        if (same.length >= BALANCE.fuseMin) {
+          sfx.play('knock', { rate: 0.6 });
+          this.fuse(same.slice(0, BALANCE.fuseMin));
+          break;
+        }
+      }
+    }
+  }
+
+  /** 自動ハンドルの ON/OFF の札（機材を買ったときだけ出す） */
+  private renderAutoSign() {
+    const s = S();
+    if (upAutoCrank(s) <= 0) return;
+    if (!this.autoSign) {
+      const c = this.add.container(92, this.jar.top - 74).setDepth(95);
+      const g = this.add.graphics();
+      const label = txt(this, 0, 2, '', 22, { color: CSS.cream });
+      c.add([g, label]);
+      c.setSize(140, 56).setInteractive({ useHandCursor: true });
+      c.on('pointerdown', () => {
+        s.autoCrankOn = !s.autoCrankOn;
+        sfx.play('tap');
+        save();
+        this.renderAutoSign();
+      });
+      c.setData('g', g).setData('label', label);
+      this.autoSign = c;
+    }
+    const g = this.autoSign.getData('g') as Phaser.GameObjects.Graphics;
+    const label = this.autoSign.getData('label') as Phaser.GameObjects.Text;
+    g.clear();
+    drawPlate(g, -70, -26, 140, 52, s.autoCrankOn ? PAL.moss : PAL.plum, { radius: 10, shadow: 4, outline: 4, shine: false });
+    label.setText(s.autoCrankOn ? '自動 ON' : '自動 OFF');
   }
 
   /** 改装「自動かき混ぜ機」：瓶をときどき軽くまぜる */
@@ -1275,6 +1347,7 @@ export class ShopScene extends Phaser.Scene {
   update() {
     this.applyTilt();
     this.autoStir();
+    this.autoMachines();
     this.checkClusters();
     this.coach?.update();
     for (const c of this.capsules) {

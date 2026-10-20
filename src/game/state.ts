@@ -1,7 +1,7 @@
 // ゲーム状態と保存。Phase 1〜3 は localStorage（必ず try/catch）。
 import { BALANCE } from '../config';
 import { nextRarity, RARITY_INFO, type Rarity } from '../data/rarity';
-import { advanceEvents, initEvents, type EventState } from './events';
+import { advanceEvents, dayEvent, initEvents, type EventState } from './events';
 import { advanceMarketDay, initMarket, migrateMarket, type MarketState } from './market';
 import { runHook } from './relics';
 import { upApBonus, upFreeStall, upJarBonus } from './upgrades';
@@ -59,6 +59,8 @@ export type GameState = {
   relicGachaWeek: number;
   /** 店の改装のレベル（id → レベル） */
   upgrades: Record<string, number>;
+  /** 自動ハンドルを動かすか（店の札で切り替え） */
+  autoCrankOn: boolean;
   today: DayStats;
   totals: { pulls: number; sales: number; transforms: number; bestRarity: Rarity | null; bestSale?: number };
   /** 昨夜化けたカプセル（瓶の並び順のインデックス）。朝の演出に使う */
@@ -100,6 +102,7 @@ export function newGame(): GameState {
     relicGachaDay: 0,
     relicGachaWeek: 0,
     upgrades: {},
+    autoCrankOn: true,
     today: freshDay(BALANCE.startCoins),
     totals: { pulls: 0, sales: 0, transforms: 0, bestRarity: null },
     nightChanges: [],
@@ -125,7 +128,7 @@ export function jarCapacity(s: GameState): number {
 }
 
 /** 縁起物を反映した値 */
-export const pullCost = (s: GameState, base: number) => runHook(s, 'onPullCost', base);
+export const pullCost = (s: GameState, base: number) => Math.max(1, Math.round(runHook(s, 'onPullCost', base) * (dayEvent(s)?.gacha ?? 1)));
 export const sellApCost = (s: GameState) => (upFreeStall(s) ? 0 : runHook(s, 'onSellApCost', BALANCE.apCost.sell));
 
 /** 今週の返済額（縁起物で減ることがある） */
@@ -148,6 +151,8 @@ export function isPayday(s: GameState): boolean {
 
 /** 閉店後に翌日へ進める（返済処理は PaydayScene 側で先に済ませる） */
 export function advanceDay(s: GameState): void {
+  // 夜のうちに化ける（昨日のうちに付いた「化けやすい」はここで使う）
+  nightTransform(s);
   s.day += 1;
   s.apMax = runHook(s, 'onDayStart', BALANCE.apPerDay) + upApBonus(s);
   s.apMax += s.apBonusTomorrow;
@@ -155,10 +160,13 @@ export function advanceDay(s: GameState): void {
   s.apBonusTomorrow = 0;
   advanceMarketDay(s.market, s.day);
   advanceEvents(s);
+  // 今日の出来事で AP が増える
+  const extraAp = dayEvent(s)?.ap ?? 0;
+  s.apMax += extraAp;
+  s.ap += extraAp;
   s.today = freshDay(s.coins);
-  nightTransform(s);
+  s.today.transforms = s.nightChanges.length;
   s.pendingMorning = true;
-  // TODO(Phase 2): 噂（掲示板）・イベントの抽選
 }
 
 // TODO(balance): 夜に化ける確率（上位ほど起きにくい）
@@ -252,6 +260,7 @@ export function loadSave(): GameState | null {
     s.relicGachaDay ??= 0;
     s.relicGachaWeek ??= 0;
     s.upgrades ??= {};
+    s.autoCrankOn ??= true;
     s.events ??= initEvents();
     s.jarShiny ??= s.jar.map(() => false);
     s.today.shuffles ??= 0;

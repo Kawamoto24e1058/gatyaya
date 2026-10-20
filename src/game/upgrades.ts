@@ -104,6 +104,38 @@ export const UPGRADES: UpgradeDef[] = [
     glyph: '札',
     levels: [{ cost: 300, text: '売り場の在庫に今日の値段を表示する' }],
   },
+  // ---- 自動化の機材 ----
+  {
+    id: 'autocrank',
+    cat: 'machine',
+    name: '自動ハンドル',
+    glyph: '自',
+    levels: [
+      { cost: 600, text: 'ガチャを 6 秒ごとに自動で回す（店の左の札で ON/OFF）' },
+      { cost: 1800, text: '自動で回す間隔 3.5 秒' },
+      { cost: 5000, text: '自動で回す間隔 2 秒' },
+    ],
+  },
+  {
+    id: 'autoopen',
+    cat: 'machine',
+    name: '自動開封機',
+    glyph: '開',
+    levels: [
+      { cost: 500, text: '瓶の N カプセルを 3 秒ごとに自動で開ける' },
+      { cost: 2000, text: 'N と R を 1.8 秒ごとに自動で開ける' },
+    ],
+  },
+  {
+    id: 'autofuse',
+    cat: 'machine',
+    name: '合成からくり',
+    glyph: '合',
+    levels: [
+      { cost: 800, text: '瓶のどこにあっても、同じ色が 3 つあれば 8 秒ごとに合成' },
+      { cost: 3000, text: '合成の間隔 4 秒' },
+    ],
+  },
 ];
 
 export const UPGRADE_BY_ID: Record<string, UpgradeDef> = Object.fromEntries(UPGRADES.map((u) => [u.id, u]));
@@ -138,6 +170,13 @@ export const upApBonus = (s: GameState) => upgradeLevel(s, 'lantern');
 /** 1 回転で出る個数 */
 export const upRapid = (s: GameState) => 1 + upgradeLevel(s, 'rapid');
 export const upPriceGun = (s: GameState) => upgradeLevel(s, 'pricegun') > 0;
+/** 自動ハンドルの間隔（秒）。0 は無し */
+export const upAutoCrank = (s: GameState) => [0, 6, 3.5, 2][upgradeLevel(s, 'autocrank')];
+/** 自動開封：間隔（秒）と開けるレア度 */
+export const upAutoOpen = (s: GameState): { every: number; rarities: Rarity[] } | null =>
+  [null, { every: 3, rarities: ['N'] as Rarity[] }, { every: 1.8, rarities: ['N', 'R'] as Rarity[] }][upgradeLevel(s, 'autoopen')];
+/** 合成からくりの間隔（秒）。0 は無し */
+export const upAutoFuse = (s: GameState) => [0, 8, 4][upgradeLevel(s, 'autofuse')];
 
 /** 仕入れ先の格上げを反映した排出率（レベルごとに N を減らして R 以上へ回す） */
 export function upRarityWeights(s: GameState, base: Record<Rarity, number>): Record<Rarity, number> {

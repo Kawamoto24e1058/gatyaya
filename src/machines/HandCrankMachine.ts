@@ -453,6 +453,10 @@ class HandCrankMachine implements MachineView {
     this.priceText.setText(`${cost}`);
   }
 
+  isInputEnabled() {
+    return this.enabled;
+  }
+
   setInputEnabled(on: boolean) {
     this.enabled = on;
     if (!on) {

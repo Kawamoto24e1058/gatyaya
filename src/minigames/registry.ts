@@ -5,7 +5,10 @@ import { BUBBLE_BONUS_SHEETS, BubbleWrapGame } from './BubbleWrap';
 import { CAPSULE_FILL_BONUS_THRESHOLD, CapsuleFillGame } from './CapsuleFill';
 import { COIN_BONUS_CORRECT, CoinSortGame } from './CoinSort';
 import { GHOST_BONUS, GhostWhackGame } from './GhostWhack';
+import { GARAPON_BONUS_GOLD, GaraponGame } from './Garapon';
+import { GOLDFISH_BONUS, GoldfishGame } from './Goldfish';
 import { LANTERN_BONUS_LIT, LanternGame } from './Lantern';
+import { MEMORY_BONUS_BOARDS, MemoryGame } from './Memory';
 import { OmikujiGame, OMIKUJI_BONUS_DAIKICHI } from './Omikuji';
 import { ScratchGame } from './Scratch';
 import type { MiniGameDef } from './types';
@@ -68,6 +71,28 @@ export const MINIGAMES: MiniGameDef[] = [
     bonusText: `大吉を${OMIKUJI_BONUS_DAIKICHI}回引くと 今夜は化けやすい（×2）`,
     luck: true,
     create: () => new OmikujiGame(),
+  },
+  {
+    id: 'memory',
+    name: '棚卸し',
+    howTo: '伏せた札を 2 枚ずつめくって\n同じ絵をそろえる（連続でそろえると割増）',
+    bonusText: `${MEMORY_BONUS_BOARDS}棚以上片付けると 瓶の容量+2（今週のみ）`,
+    create: () => new MemoryGame(),
+  },
+  {
+    id: 'goldfish',
+    name: '金魚すくい',
+    howTo: '押さえてポイを沈め、金魚の上で離してすくう\n沈めているとポイが弱る。金の金魚は大当たり',
+    bonusText: `${GOLDFISH_BONUS}匹以上すくうと 売値+5%（今週のみ）`,
+    create: () => new GoldfishGame(),
+  },
+  {
+    id: 'garapon',
+    name: '福引き当番',
+    howTo: 'ガラポンを指でぐるぐる回す\n1 周で玉が 1 つ。金玉・虹玉は大当たり',
+    bonusText: `金玉を${GARAPON_BONUS_GOLD}つ以上出すと 明日の提灯（AP）+1`,
+    luck: true,
+    create: () => new GaraponGame(),
   },
 ];
 

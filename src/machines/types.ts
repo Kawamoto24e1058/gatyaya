@@ -15,6 +15,8 @@ export interface MachineView {
   destroy(): void;
   /** 他の UI が前面にある間などに入力を止める */
   setInputEnabled(on: boolean): void;
+  /** 入力を受け付けているか（ほかの画面が前面にないか） */
+  isInputEnabled?(): boolean;
 }
 
 export type MachineHooks = {
