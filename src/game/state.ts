@@ -60,7 +60,7 @@ export type GameState = {
   /** 店の改装のレベル（id → レベル） */
   upgrades: Record<string, number>;
   today: DayStats;
-  totals: { pulls: number; sales: number; transforms: number; bestRarity: Rarity | null };
+  totals: { pulls: number; sales: number; transforms: number; bestRarity: Rarity | null; bestSale?: number };
   /** 昨夜化けたカプセル（瓶の並び順のインデックス）。朝の演出に使う */
   nightChanges: number[];
   /** 朝のバナーをまだ出していない */

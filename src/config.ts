@@ -52,7 +52,7 @@ export const BALANCE = {
   daysPerWeek: 7,
   // シミュレーター（npm run sim）で調整：縁起物をランダムに取るプレイで 5 週完済 約 7 割、縁起物なしでは約 5%
   firstQuota: 2000,
-  quotaGrowth: 2.85,
+  quotaGrowth: 2.95,
   /** この週数を返済しきると町の借金を完済（TODO(未決)：総額・町ごとの差） */
   weeksPerTown: 5,
   jarCapacity: 20,

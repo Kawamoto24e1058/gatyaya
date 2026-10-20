@@ -223,12 +223,24 @@ export function estimateSellTotal(state: GameState, prizeId: string, n: number):
 }
 
 /** 1 個売る。所持数・飽和・コインを更新し、売値を返す */
+// TODO(balance)：太客（言い値で買うお客）。まれに 1 個の売値が何倍にもなる
+export const BIG_SPENDER_RATE = 0.015;
+const bigSpenderMult = () => Math.round(4 + Math.random() * 4);
+
+/** 売った結果。bigSpender は太客が付いたときの倍率 */
+export type SaleResult = { price: number; bigSpender?: number };
+
 export function sellOne(state: GameState, prizeId: string): number {
+  return sellOneEx(state, prizeId).price;
+}
+
+export function sellOneEx(state: GameState, prizeId: string): SaleResult {
   const have = state.inventory[prizeId] ?? 0;
-  if (have <= 0) return 0;
+  if (have <= 0) return { price: 0 };
   // 販売禁止中は表では売れない（闇ルートは sellDark）
-  if (isBanned(state, parseStock(prizeId).prize.seriesId)) return 0;
-  const price = sellPrice(state, prizeId);
+  if (isBanned(state, parseStock(prizeId).prize.seriesId)) return { price: 0 };
+  const big = Math.random() < BIG_SPENDER_RATE ? bigSpenderMult() : undefined;
+  const price = sellPrice(state, prizeId) * (big ?? 1);
   if (matchesOrder(state, prizeId)) state.market.order!.left -= 1;
   state.inventory[prizeId] = have - 1;
   if (state.inventory[prizeId] <= 0) delete state.inventory[prizeId];
@@ -236,7 +248,7 @@ export function sellOne(state: GameState, prizeId: string): number {
   state.coins += price;
   state.today.sales += price;
   state.totals.sales += price;
-  return price;
+  return { price, bigSpender: big };
 }
 
 export type TrendSign = 'up' | 'down' | 'flat';

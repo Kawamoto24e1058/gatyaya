@@ -6,7 +6,7 @@ import { pick } from '../core/util';
 import { runHook } from './relics';
 import type { GameState } from './state';
 
-export type EventType = 'tv' | 'discontinued' | 'fake' | 'ban';
+export type EventType = 'tv' | 'discontinued' | 'fake' | 'ban' | 'frenzy';
 
 export type EventDef = {
   type: EventType;
@@ -56,6 +56,17 @@ export const EVENT_DEFS: Record<EventType, EventDef> = {
     weight: 2,
     rumor: (s) => `「${s}」の偽物が出回るかも…`,
     news: (s) => `⚠ ${s}の偽物が出回っている`,
+  },
+  frenzy: {
+    // めったに来ない大ブーム。持っていれば一気に大儲け
+    type: 'frenzy',
+    name: '大ブーム',
+    icon: '💰',
+    days: 1,
+    mult: () => 6 + Math.random() * 6,
+    weight: 0.6,
+    rumor: (s) => `「${s}」がとんでもない大ブームになるかも…!?`,
+    news: (s) => `💰 ${s}が大ブーム！ 今日だけ値段が跳ね上がった！`,
   },
   ban: {
     type: 'ban',

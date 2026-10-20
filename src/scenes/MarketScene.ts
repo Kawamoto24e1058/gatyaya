@@ -8,7 +8,8 @@ import { fmt } from '../core/util';
 import { parseStock, SERIES, SHINY_MULT } from '../data/prizes';
 import { RARITY_INFO } from '../data/rarity';
 import { activeOn, DARK_CATCH_RATE, EVENT_DEFS, eventMult, isBanned } from '../game/events';
-import { darkPrice, estimateSellTotal, matchesOrder, saturationOf, sellDark, sellOne, sellPrice, trendSign, type SeriesMarket } from '../game/market';
+import { darkPrice, estimateSellTotal, matchesOrder, saturationOf, sellDark, sellOneEx, sellPrice, trendSign, type SeriesMarket } from '../game/market';
+import { jackpotFx } from '../ui/Jackpot';
 import { upPriceGun } from '../game/upgrades';
 import { runHook } from '../game/relics';
 import { S, save } from '../game/state';
@@ -464,9 +465,20 @@ export class MarketScene extends Phaser.Scene {
   private sell(id: string, n: number) {
     const s = S();
     let earned = 0;
-    for (let i = 0; i < n; i++) earned += sellOne(s, id);
+    let bigMult = 0;
+    for (let i = 0; i < n; i++) {
+      const r = sellOneEx(s, id);
+      earned += r.price;
+      if (r.bigSpender) bigMult = Math.max(bigMult, r.bigSpender);
+    }
     if (earned <= 0) return;
+    const best = s.totals.bestSale ?? 0;
+    if (earned > best) s.totals.bestSale = earned;
     save();
+    // 高額が出たら大当たりの演出（太客・返済額の 1/4 以上・ブームの日のまとめ売り）
+    const bigSale = earned >= Math.max(400, s.quota * 0.25);
+    if (bigMult > 0) jackpotFx(this, { heading: `太客！ ×${bigMult}`, amount: earned, sub: '言い値で買っていった！', big: bigSale });
+    else if (bigSale) jackpotFx(this, { heading: '大儲け！', amount: earned, sub: earned > best && best > 0 ? '過去最高の売上！' : undefined });
     sfx.play('coin', { rate: n > 1 ? 1.05 : 1 });
     if (n > 3) sfx.play('coin', { delay: 0.09, rate: 1.12, vol: 0.7 });
     sfx.play('stamp', { vol: 0.5, delay: 0.05 });

@@ -4,14 +4,17 @@ import { CSS, PAL } from '../config';
 import { sfx } from '../core/audio';
 import { vibrate } from '../core/util';
 import { Button, drawPlate, stamp, txt } from '../ui/widgets';
+import { jackpotFx } from '../ui/Jackpot';
 import { makeSparks, OY, popText } from './kit';
 import type { MiniGame, Reward } from './types';
 
 type Fortune = { label: string; weight: number; color: string; apply: (pot: number) => number };
 // TODO(balance)
 const FORTUNES: Fortune[] = [
-  { label: '大吉', weight: 0.15, color: CSS.gold, apply: (p) => p * 2 },
-  { label: '吉', weight: 0.35, color: CSS.good, apply: (p) => p + 10 },
+  // めったに出ない大当たり
+  { label: '大大吉', weight: 0.02, color: CSS.gold, apply: (p) => p * 5 },
+  { label: '大吉', weight: 0.14, color: CSS.gold, apply: (p) => p * 2 },
+  { label: '吉', weight: 0.34, color: CSS.good, apply: (p) => p + 10 },
   { label: '小吉', weight: 0.28, color: CSS.cream, apply: (p) => p + 5 },
   { label: '凶', weight: 0.22, color: CSS.bad, apply: () => 0 },
 ];
@@ -54,7 +57,7 @@ export class OmikujiGame implements MiniGame {
     this.bankText = txt(scene, 360, 935 + OY, '', 26, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 5 });
     this.drawBtn = new Button(scene, 200, 1050 + OY, { w: 280, h: 110, color: PAL.moss, label: '引く', sub: '吉なら増える', onPress: () => this.draw() });
     this.stopBtn = new Button(scene, 520, 1050 + OY, { w: 280, h: 110, color: PAL.mustard, label: 'やめる', sub: '稼ぎを受け取る', onPress: () => this.bank() });
-    txt(scene, 360, 1150 + OY, '大吉 ×2 ／ 吉 +10 ／ 小吉 +5 ／ 凶 没収', 22, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 5 });
+    txt(scene, 360, 1150 + OY, '大大吉 ×5 ／ 大吉 ×2 ／ 吉 +10 ／ 小吉 +5 ／ 凶 没収', 22, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 5 });
     this.refresh();
   }
 
@@ -138,7 +141,10 @@ export class OmikujiGame implements MiniGame {
       popText(s, 360, 760 + OY, `-${before}`, CSS.bad, 40);
       s.time.delayedCall(900, () => this.endRound());
     } else {
-      if (f.label === '大吉') {
+      if (f.label === '大大吉') {
+        this.daikichi += 1;
+        jackpotFx(s, { heading: '大大吉！ ×5', amount: this.pot, sub: 'この回の稼ぎが 5 倍に！', big: this.pot >= 150 });
+      } else if (f.label === '大吉') {
         this.daikichi += 1;
         sfx.play('fanfare', { vol: 0.8 });
         this.sparks.explode(26, BOX.x + 200, BOX.y);

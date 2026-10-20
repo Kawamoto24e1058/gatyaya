@@ -4,22 +4,25 @@ import { CSS, PAL } from '../config';
 import { sfx } from '../core/audio';
 import { vibrate } from '../core/util';
 import { drawPlate, stamp, txt } from '../ui/widgets';
+import { jackpotFx } from '../ui/Jackpot';
 import { makeSparks, OY, popText } from './kit';
 import type { MiniGame, Reward } from './types';
 
-type Sym = 'zeni' | 'koban' | 'kozuchi' | 'neko';
+type Sym = 'zeni' | 'koban' | 'kozuchi' | 'senryo' | 'neko';
 const SYMS: Record<Sym, { label: string; face: number; ink: string; prize: number; name: string }> = {
   zeni: { label: '銭', face: 0xb68a54, ink: CSS.ink, prize: 12, name: '銭' },
   koban: { label: '判', face: PAL.mustard, ink: CSS.ink, prize: 30, name: '小判' },
   kozuchi: { label: '槌', face: PAL.vermilion, ink: CSS.cream, prize: 80, name: '打ち出の小槌' },
+  senryo: { label: '千', face: 0xfff1b8, ink: CSS.bad, prize: 400, name: '千両箱' },
   neko: { label: '猫', face: 0xffffff, ink: CSS.bad, prize: 20, name: '招き猫' },
 };
 // 1 枚ごとの当たりの出方。TODO(balance)
 const OUTCOMES: [Sym | null, number][] = [
-  [null, 0.45],
+  [null, 0.44],
   ['zeni', 0.3],
   ['koban', 0.15],
   ['kozuchi', 0.07],
+  ['senryo', 0.01],
   ['neko', 0.03],
 ];
 const CARDS = 4;
@@ -94,8 +97,8 @@ export class ScratchGame implements MiniGame {
     // 当たり表
     const tbl = scene.add.graphics();
     drawPlate(tbl, 70, 960 + OY, 580, 120, PAL.paper, { radius: 12, shadow: 6, outline: 4, shine: false });
-    (['zeni', 'koban', 'kozuchi', 'neko'] as Sym[]).forEach((s, i) => {
-      const x = 145 + i * 143;
+    (['zeni', 'koban', 'kozuchi', 'senryo', 'neko'] as Sym[]).forEach((s, i) => {
+      const x = 130 + i * 115;
       this.drawSym(tbl, x, 1000 + OY, s, 22);
       txt(scene, x, 1050 + OY, s === 'neko' ? '縁起物+20' : `+${SYMS[s].prize}`, 22, { color: CSS.ink });
     });
@@ -214,7 +217,8 @@ export class ScratchGame implements MiniGame {
       this.wins.push(win);
       this.coins += SYMS[win].prize;
       if (win === 'neko') this.gotNeko = true;
-      sfx.play(win === 'neko' || win === 'kozuchi' ? 'fanfare' : 'sparkle');
+      if (win === 'senryo') jackpotFx(s, { heading: '千両箱！', amount: SYMS[win].prize, sub: 'くじの大当たり！' });
+      else sfx.play(win === 'neko' || win === 'kozuchi' ? 'fanfare' : 'sparkle');
       vibrate(25);
       for (const p of this.panels) if (p.sym === win) this.sparks.explode(12, p.x, p.y);
       stamp(s, 360, CARD.y - 40, win === 'neko' ? '招き猫！' : '当たり！', 64, CSS.gold, { hold: 500, depth: 900 });
