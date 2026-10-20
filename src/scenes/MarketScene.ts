@@ -8,7 +8,8 @@ import { fmt } from '../core/util';
 import { parseStock, SERIES, SHINY_MULT } from '../data/prizes';
 import { RARITY_INFO } from '../data/rarity';
 import { activeOn, DARK_CATCH_RATE, EVENT_DEFS, eventMult, isBanned } from '../game/events';
-import { darkPrice, estimateSellTotal, saturationOf, sellDark, sellOne, sellPrice, trendSign, type SeriesMarket } from '../game/market';
+import { darkPrice, estimateSellTotal, matchesOrder, saturationOf, sellDark, sellOne, sellPrice, trendSign, type SeriesMarket } from '../game/market';
+import { upPriceGun } from '../game/upgrades';
 import { runHook } from '../game/relics';
 import { S, save } from '../game/state';
 import { Hud } from '../ui/Hud';
@@ -59,6 +60,7 @@ export class MarketScene extends Phaser.Scene {
   private detail: Phaser.GameObjects.Container | null = null;
   private detailId: string | null = null;
   private area = { top: 0, bottom: 0, x0: 0, cellW: 0, cellH: 0 };
+  private orderText?: Phaser.GameObjects.Text;
 
   constructor() {
     super('Market');
@@ -85,9 +87,10 @@ export class MarketScene extends Phaser.Scene {
     awn.fillRect(0, top, GAME_W, 5);
 
     const boardBottom = this.buildBoard(top + 60);
+    const orderBottom = this.buildOrder(boardBottom + 14);
 
     const btnY = BOTTOM - 70;
-    const caseTop = boardBottom + 36;
+    const caseTop = orderBottom + 22;
     const caseBottom = btnY - 80;
     this.buildCase(caseTop, caseBottom);
 
@@ -104,6 +107,29 @@ export class MarketScene extends Phaser.Scene {
     this.input.on('pointerdown', this.onDown, this);
     this.input.on('pointermove', this.onMove, this);
     this.input.on('pointerup', this.onUp, this);
+  }
+
+  /** お客の注文の貼り紙。戻り値は下端（注文がなければ詰める） */
+  private buildOrder(y: number): number {
+    const o = S().market.order;
+    if (!o) return y;
+    const se = SERIES.find((x) => x.id === o.seriesId)!;
+    const g = this.add.graphics();
+    drawPlate(g, 30, y, 660, 60, PAL.paper, { radius: 10, shadow: 5, outline: 4, shine: false });
+    g.fillStyle(PAL.vermilion, 1);
+    g.fillRoundedRect(38, y + 8, 96, 44, 8);
+    txt(this, 86, y + 30, '注文', 24, { color: CSS.cream });
+    this.orderText = txt(this, 150, y + 30, '', 22, { originX: 0, color: CSS.ink });
+    this.orderText.setData('label', `${se.name} の ${o.minRarity} 以上を ×${o.mult} で`);
+    this.refreshOrder();
+    return y + 60;
+  }
+
+  private refreshOrder() {
+    const o = S().market.order;
+    if (!o || !this.orderText) return;
+    this.orderText.setText(o.left > 0 ? `${this.orderText.getData('label')}（あと ${o.left} 個）` : '本日の注文は締め切りました');
+    this.orderText.setColor(o.left > 0 ? CSS.ink : CSS.inkSoft);
   }
 
   /** 黒板の相場ボード。戻り値は下端 */
@@ -244,6 +270,20 @@ export class MarketScene extends Phaser.Scene {
       drawPlate(tg, cx - A.cellW / 2 - 4, ty, 46, 38, tagColor, { radius: 8, shadow: 3, outline: 3, shine: false });
       this.list.add(tg);
       this.list.add(txt(this, cx - A.cellW / 2 + 19, ty + 19, mark, 24, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 4 }));
+      // 注文に当てはまる景品には「注」の札
+      if (matchesOrder(s, id)) {
+        const og = this.add.graphics();
+        drawPlate(og, cx - A.cellW / 2 - 4, ty + 44, 46, 38, PAL.vermilion, { radius: 8, shadow: 3, outline: 3, shine: false });
+        this.list.add(og);
+        this.list.add(txt(this, cx - A.cellW / 2 + 19, ty + 63, '注', 22, { color: CSS.cream }));
+      }
+      // 機材「値札機」：今日の値段を出す
+      if (upPriceGun(s) && !banned) {
+        const pg = this.add.graphics();
+        drawPlate(pg, cx - 34, ty + 2, 76, 34, PAL.paper, { radius: 8, shadow: 3, outline: 3, shine: false });
+        this.list.add(pg);
+        this.list.add(txt(this, cx + 4, ty + 19, fmt(sellPrice(s, id)), 20, { color: CSS.bad }));
+      }
     });
     this.clampScroll();
   }
@@ -333,7 +373,7 @@ export class MarketScene extends Phaser.Scene {
     c.add(txt(this, 360, tagY + 26, fmt(price), 64, { color: CSS.bad }));
     const sat = saturationOf(s.market, id);
     const evMult = eventMult(s, p.seriesId);
-    const detailLine = `基準 ${fmt(p.basePrice)}${shiny ? ` × 色違い ${SHINY_MULT}` : ''} × 相場 ${sm.trend.toFixed(2)}${evMult !== 1 ? ` × イベント ${evMult.toFixed(1)}` : ''} × 値崩れ ${sat.toFixed(2)}`;
+    const detailLine = `基準 ${fmt(p.basePrice)}${shiny ? ` × 色違い ${SHINY_MULT}` : ''} × 相場 ${sm.trend.toFixed(2)}${evMult !== 1 ? ` × イベント ${evMult.toFixed(1)}` : ''} × 値崩れ ${sat.toFixed(2)}${matchesOrder(s, id) ? ` × 注文 ${s.market.order!.mult}（あと ${s.market.order!.left} 個）` : ''}`;
     c.add(txt(this, 360, tagY + 76, detailLine, 17, { color: CSS.inkSoft, bold: false, wrap: 400 }));
     // TODO: 縁起物補正の内訳表示
 
@@ -436,6 +476,7 @@ export class MarketScene extends Phaser.Scene {
     floatText(this, ox, oy - 100, `+${fmt(earned)}`, CSS.gold, 46);
     this.time.delayedCall(380, () => this.hud.refresh(true));
     this.renderList();
+    this.refreshOrder();
     // 押したボタン自身を破棄するので、入力処理が終わってから作り直す
     this.time.delayedCall(0, () => {
       if ((s.inventory[id] ?? 0) > 0 && this.detailId === id) this.openDetail(id, false);

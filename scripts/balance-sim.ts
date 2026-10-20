@@ -11,7 +11,7 @@ import { RARITIES, type Rarity } from '../src/data/rarity';
 import { canSell, sellOne, sellPrice } from '../src/game/market';
 import { paydayOffer, rollRelics, runHook } from '../src/game/relics';
 import { pullRelicGacha, relicGachaPrice } from '../src/game/relicGacha';
-import { buyUpgrade, nextUpgradeCost, upAttract, upBaitoMult, upTwinChance, UPGRADES } from '../src/game/upgrades';
+import { buyUpgrade, nextUpgradeCost, upAttract, upBaitoMult, upRarityWeights, upTwinChance, UPGRADES } from '../src/game/upgrades';
 import { addRelic, advanceDay, jarCapacity, newGame, payDebt, pullCost, sellApCost, type GameState } from '../src/game/state';
 
 const USE_RELICS = process.env.RELICS !== '0';
@@ -23,6 +23,8 @@ if (process.env.Q0) B.firstQuota = Number(process.env.Q0);
 if (process.env.G) B.quotaGrowth = Number(process.env.G);
 if (process.env.COST) MACHINE_BY_ID.hand.cost = Number(process.env.COST);
 if (process.env.START) B.startCoins = Number(process.env.START);
+if (process.env.SATP) B.saturationPerSale = Number(process.env.SATP);
+if (process.env.SATR) B.saturationRecovery = Number(process.env.SATR);
 // 売値の倍率・バイト代の平均の試し打ち：PM=1.3 BAITO=50 npm run sim
 if (process.env.PM) for (const p of PRIZES) p.basePrice = Math.round(p.basePrice * Number(process.env.PM));
 const BAITO_AVG = Number(process.env.BAITO ?? 56);
@@ -75,11 +77,11 @@ function pull(s: GameState) {
       return;
     }
   }
-  s.jar.push(runHook(s, 'onGachaRoll', weightedPick(machine.rarityWeights)));
+  s.jar.push(runHook(s, 'onGachaRoll', weightedPick(upRarityWeights(s, machine.rarityWeights))));
   s.jarShiny.push(false);
   // 改装「おまけ玉」
   if (Math.random() < upTwinChance(s) && s.jar.length < jarCapacity(s)) {
-    s.jar.push(runHook(s, 'onGachaRoll', weightedPick(machine.rarityWeights)));
+    s.jar.push(runHook(s, 'onGachaRoll', weightedPick(upRarityWeights(s, machine.rarityWeights))));
     s.jarShiny.push(false);
   }
 }
@@ -199,6 +201,10 @@ function runOnce(st: Strategy): { weeks: number; coinsAtPayday: number[] } {
 }
 
 const strategies: Strategy[] = [
+  {
+    name: '安い日は売らない（×1.0 未満は持つ）',
+    shouldSell: (s, key, daysLeft) => s.market.series[parseStock(key).prize.seriesId].trend >= 1.0 || daysLeft <= 1,
+  },
   { name: '毎日ぜんぶ売る', shouldSell: () => true },
   {
     name: '相場を読む（×1.3 以上で売る）',

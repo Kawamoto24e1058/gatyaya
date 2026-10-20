@@ -11,7 +11,7 @@ import { adjustedSeriesWeights } from '../game/events';
 import { planFusion } from '../game/fusion';
 import { RELIC_BY_ID, rollRelics, runHook } from '../game/relics';
 import { pullRelicGacha, RELIC_GACHA, relicGachaBlocked, relicGachaPrice } from '../game/relicGacha';
-import { upAttract, upStirInterval, upTwinChance } from '../game/upgrades';
+import { upAttract, upRapid, upRarityWeights, upStirInterval, upTwinChance } from '../game/upgrades';
 import { showKawaraban } from '../ui/Kawaraban';
 import { Coach } from '../ui/Coach';
 import { tilt } from '../core/tilt';
@@ -319,7 +319,17 @@ export class ShopScene extends Phaser.Scene {
     return true;
   }
 
+  /** ハンドル 1 回転。機材「連射ハンドル」があれば続けて出す（1 個ずつ代金と瓶の空きを確かめる） */
   private pull() {
+    this.pullOne();
+    for (let i = 1; i < upRapid(S()); i++) {
+      this.time.delayedCall(i * 220, () => {
+        if (this.canPull() === true) this.pullOne();
+      });
+    }
+  }
+
+  private pullOne() {
     const s = S();
     const cost = pullCost(s, this.def.cost);
     s.coins -= cost;
@@ -348,7 +358,7 @@ export class ShopScene extends Phaser.Scene {
       return;
     }
 
-    const rolled = weightedPick(this.def.rarityWeights);
+    const rolled = weightedPick(upRarityWeights(s, this.def.rarityWeights));
     const rarity = runHook(s, 'onGachaRoll', rolled, { machineId: this.def.id });
     const out = this.machine.outlet;
     const c = this.spawnCapsule(out.x + Phaser.Math.Between(-6, 6), out.y, rarity, Phaser.Math.FloatBetween(-1.4, 1.4), 3);
@@ -361,7 +371,7 @@ export class ShopScene extends Phaser.Scene {
     if (Math.random() < upTwinChance(s)) {
       this.time.delayedCall(260, () => {
         if (this.capsules.length + this.restoreQueue.length >= jarCapacity(s)) return;
-        const r2 = runHook(s, 'onGachaRoll', weightedPick(this.def.rarityWeights), { machineId: this.def.id });
+        const r2 = runHook(s, 'onGachaRoll', weightedPick(upRarityWeights(s, this.def.rarityWeights)), { machineId: this.def.id });
         this.spawnCapsule(out.x + Phaser.Math.Between(-6, 6), out.y, r2, Phaser.Math.FloatBetween(-1.4, 1.4), 3);
         this.noteBest(r2);
         sfx.play('goton', { rate: 1.3, vol: 0.7 });

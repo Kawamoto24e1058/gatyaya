@@ -151,7 +151,7 @@ export class CloseScene extends Phaser.Scene {
       h: 92,
       color: PAL.wood,
       label: '夜の改装',
-      sub: '店を強化する',
+      sub: '店とガチャ機を強化',
       size: 30,
       onPress: () => showUpgradePanel(this, () => undefined),
     }).setDepth(50);

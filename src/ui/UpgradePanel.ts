@@ -1,10 +1,10 @@
-// 夜の改装：閉店後にコインで店を強化する画面
+// 夜の改装：閉店後にコインで店（改装）とガチャ機（機材）を強化する画面
 import Phaser from 'phaser';
 import { CSS, GAME_H, GAME_W, PAL } from '../config';
 import { sfx } from '../core/audio';
 import { fmt } from '../core/util';
 import { daysUntilPayday, dueAmount, S, saveNow } from '../game/state';
-import { buyUpgrade, nextUpgradeCost, upgradeLevel, UPGRADES } from '../game/upgrades';
+import { buyUpgrade, nextUpgradeCost, upgradeLevel, UPGRADES, type UpgradeDef } from '../game/upgrades';
 import { Button, drawPlate, stamp, title, txt } from './widgets';
 
 export function showUpgradePanel(scene: Phaser.Scene, onClose: () => void) {
@@ -12,18 +12,38 @@ export function showUpgradePanel(scene: Phaser.Scene, onClose: () => void) {
   const root = scene.add.container(0, 0).setDepth(3000);
   root.add(scene.add.rectangle(GAME_W / 2, GAME_H / 2, GAME_W, GAME_H, PAL.ink, 0.9).setInteractive());
   const rowH = 128;
-  const top = GAME_H / 2 - (UPGRADES.length * rowH) / 2 - 40;
-  root.add(title(scene, 360, top - 110, '夜の改装', 48, CSS.gold));
-  const coinT = txt(scene, 360, top - 56, '', 24, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 5 });
+  const maxRows = Math.max(...(['shop', 'machine'] as const).map((c) => UPGRADES.filter((u) => u.cat === c).length));
+  const top = GAME_H / 2 - (maxRows * rowH) / 2 + 10;
+  let tab: UpgradeDef['cat'] = 'shop';
+  root.add(title(scene, 360, top - 170, '夜の改装', 48, CSS.gold));
+  const coinT = txt(scene, 360, top - 118, '', 24, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 5 });
   root.add(coinT);
   const rows = scene.add.container(0, 0);
   root.add(rows);
 
+  // タブ：店の改装 ／ ガチャ機の機材
+  const tabs = (['shop', 'machine'] as const).map((c, i) => {
+    const b = new Button(scene, 250 + i * 220, top - 50, {
+      w: 200,
+      h: 64,
+      color: PAL.wood,
+      label: c === 'shop' ? '店の改装' : 'ガチャ機材',
+      size: 24,
+      onPress: () => {
+        tab = c;
+        render();
+      },
+    });
+    root.add(b);
+    return { c, b };
+  });
+
   const render = () => {
     rows.removeAll(true);
+    for (const t of tabs) t.b.setAlpha(t.c === tab ? 1 : 0.55).setScale(t.c === tab ? 1.04 : 0.96);
     const days = daysUntilPayday(s);
     coinT.setText(`所持 ${fmt(s.coins)} コイン　／　返済 ${fmt(dueAmount(s))}（${days === 0 ? '明日' : `あと ${days} 日`}）`);
-    UPGRADES.forEach((u, i) => {
+    UPGRADES.filter((u) => u.cat === tab).forEach((u, i) => {
       const y = top + i * rowH + rowH / 2;
       const lv = upgradeLevel(s, u.id);
       const max = u.levels.length;
@@ -69,7 +89,7 @@ export function showUpgradePanel(scene: Phaser.Scene, onClose: () => void) {
   };
   render();
 
-  const close = new Button(scene, 360, top + UPGRADES.length * rowH + 70, { w: 300, h: 88, color: PAL.plum, label: '閉じる', size: 30, onPress: () => {
+  const close = new Button(scene, 360, top + maxRows * rowH + 60, { w: 300, h: 88, color: PAL.plum, label: '閉じる', size: 30, onPress: () => {
     sfx.play('whoosh');
     root.destroy();
     onClose();
