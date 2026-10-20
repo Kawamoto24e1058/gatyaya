@@ -10,13 +10,13 @@ import type { MiniGame, Reward } from './types';
 type Fortune = { label: string; weight: number; color: string; apply: (pot: number) => number };
 // TODO(balance)
 const FORTUNES: Fortune[] = [
-  { label: '大吉', weight: 0.14, color: CSS.gold, apply: (p) => p * 2 },
-  { label: '吉', weight: 0.33, color: CSS.good, apply: (p) => p + 6 },
-  { label: '小吉', weight: 0.28, color: CSS.cream, apply: (p) => p + 3 },
-  { label: '凶', weight: 0.25, color: CSS.bad, apply: () => 0 },
+  { label: '大吉', weight: 0.15, color: CSS.gold, apply: (p) => p * 2 },
+  { label: '吉', weight: 0.35, color: CSS.good, apply: (p) => p + 10 },
+  { label: '小吉', weight: 0.28, color: CSS.cream, apply: (p) => p + 5 },
+  { label: '凶', weight: 0.22, color: CSS.bad, apply: () => 0 },
 ];
 const ROUNDS = 3;
-const START_POT = 6;
+const START_POT = 10;
 const BONUS_DAIKICHI = 3;
 const BOX = { x: 360, y: 560 + OY };
 
@@ -54,7 +54,7 @@ export class OmikujiGame implements MiniGame {
     this.bankText = txt(scene, 360, 935 + OY, '', 26, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 5 });
     this.drawBtn = new Button(scene, 200, 1050 + OY, { w: 280, h: 110, color: PAL.moss, label: '引く', sub: '吉なら増える', onPress: () => this.draw() });
     this.stopBtn = new Button(scene, 520, 1050 + OY, { w: 280, h: 110, color: PAL.mustard, label: 'やめる', sub: '稼ぎを受け取る', onPress: () => this.bank() });
-    txt(scene, 360, 1150 + OY, '大吉 ×2 ／ 吉 +6 ／ 小吉 +3 ／ 凶 没収', 22, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 5 });
+    txt(scene, 360, 1150 + OY, '大吉 ×2 ／ 吉 +10 ／ 小吉 +5 ／ 凶 没収', 22, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 5 });
     this.refresh();
   }
 

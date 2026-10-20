@@ -19,6 +19,8 @@ export type DayStats = {
   fusions: number;
   opened: number;
   coinsAtStart: number;
+  /** 今日のバイト回数（2 回目からは疲れて給料が減る） */
+  baitos: number;
 };
 
 export type GameState = {
@@ -69,7 +71,7 @@ const SAVE_KEY = 'gatyaya.save.v1';
 const MUTE_KEY = 'gatyaya.mute';
 
 function freshDay(coins: number): DayStats {
-  return { pulls: 0, gachaSpent: 0, sales: 0, wages: 0, transforms: 0, shuffles: 0, fusions: 0, opened: 0, coinsAtStart: coins };
+  return { pulls: 0, gachaSpent: 0, sales: 0, wages: 0, transforms: 0, shuffles: 0, fusions: 0, opened: 0, coinsAtStart: coins, baitos: 0 };
 }
 
 export function newGame(): GameState {
@@ -254,6 +256,7 @@ export function loadSave(): GameState | null {
     s.jarShiny ??= s.jar.map(() => false);
     s.today.shuffles ??= 0;
     s.today.fusions ??= 0;
+    s.today.baitos ??= 0;
     s.today.transforms ??= 0;
     s.totals.transforms ??= 0;
     return s;

@@ -51,8 +51,8 @@ export const BALANCE = {
   },
   daysPerWeek: 7,
   // シミュレーター（npm run sim）で調整：縁起物をランダムに取るプレイで 5 週完済 約 7 割、縁起物なしでは約 5%
-  firstQuota: 1000,
-  quotaGrowth: 2.0,
+  firstQuota: 1500,
+  quotaGrowth: 2.5,
   /** この週数を返済しきると町の借金を完済（TODO(未決)：総額・町ごとの差） */
   weeksPerTown: 5,
   jarCapacity: 20,
@@ -60,6 +60,8 @@ export const BALANCE = {
   blackCapsuleRate: 0.004,
   /** 色違いを作るのに必要な数 */
   fuseMin: 3,
+  /** 同じ日に 2 回目・3 回目のバイトは疲れて給料が減る（TODO(balance)） */
+  baitoFatigue: [1, 0.7, 0.5],
   saturationPerSale: 0.92,
   saturationRecovery: 0.5,
   trendMin: 0.3,

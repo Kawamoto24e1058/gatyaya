@@ -6,7 +6,7 @@
 import { BALANCE } from '../src/config';
 import { pick, weightedPick } from '../src/core/util';
 import { MACHINE_BY_ID } from '../src/data/machines';
-import { parseStock, prizesOf, stockKey } from '../src/data/prizes';
+import { parseStock, PRIZES, prizesOf, stockKey } from '../src/data/prizes';
 import { RARITIES, type Rarity } from '../src/data/rarity';
 import { canSell, sellOne, sellPrice } from '../src/game/market';
 import { paydayOffer, rollRelics, runHook } from '../src/game/relics';
@@ -23,13 +23,29 @@ if (process.env.Q0) B.firstQuota = Number(process.env.Q0);
 if (process.env.G) B.quotaGrowth = Number(process.env.G);
 if (process.env.COST) MACHINE_BY_ID.hand.cost = Number(process.env.COST);
 if (process.env.START) B.startCoins = Number(process.env.START);
+// 売値の倍率・バイト代の平均の試し打ち：PM=1.3 BAITO=50 npm run sim
+if (process.env.PM) for (const p of PRIZES) p.basePrice = Math.round(p.basePrice * Number(process.env.PM));
+const BAITO_AVG = Number(process.env.BAITO ?? 56);
+const FATIGUE = process.env.FATIGUE !== '0';
 const MAX_WEEKS = 8;
+/** 収入の内訳（5 週目まで）：どこで稼いでいるか */
+const INC = { baito: 0, sales: 0, gacha: 0 };
+const INC1 = { baito: 0, sales: 0, gacha: 0 };
+const track = (s: GameState, k: keyof typeof INC, v: number) => {
+  if (s.week <= BALANCE.weeksPerTown) INC[k] += v;
+  if (s.week === 1) INC1[k] += v;
+};
+const sell1 = (s: GameState, key: string) => {
+  const v = sellOne(s, key);
+  track(s, 'sales', v);
+  return v;
+};
 const machine = MACHINE_BY_ID.hand;
 console.log(`ガチャ ${machine.cost} / 初期 ${BALANCE.startCoins} / ノルマ ${BALANCE.firstQuota} ×${BALANCE.quotaGrowth}`);
 
 // ---- 近似モデル（実機の体感に合わせて調整する） ----
 /** バイト 1 回の稼ぎ（観測値 45〜67） */
-const baitoCoins = () => 45 + Math.floor(Math.random() * 23);
+const baitoCoins = () => Math.round(BAITO_AVG * (0.8 + Math.random() * 0.4));
 /** バイトで瓶 +1 の特典を取れる確率 */
 const BAITO_BONUS_RATE = 0.6;
 /** 同色が 3 つ以上あるとき、その日のうちにくっついて合成される確率（まぜるボタン込み） */
@@ -47,6 +63,7 @@ const USE_UPGRADES = process.env.UPG !== '0';
 function pull(s: GameState) {
   const cost = pullCost(s, machine.cost);
   s.coins -= cost;
+  track(s, 'gacha', cost);
   s.coins += runHook(s, 'onPullRefund', 0, { cost });
   s.today.pulls += 1;
   s.totals.pulls += 1;
@@ -111,7 +128,7 @@ function sellWhere(s: GameState, pred: (key: string) => boolean) {
       // 値崩れで基準の半分を切ったら、その日はやめる
       const { prize } = parseStock(key);
       if (sellPrice(s, key) < prize.basePrice * 0.35) break;
-      sellOne(s, key);
+      sell1(s, key);
     }
   }
 }
@@ -121,7 +138,9 @@ function playDay(s: GameState, st: Strategy): void {
   const daysLeft = (BALANCE.daysPerWeek - (s.day % BALANCE.daysPerWeek)) % BALANCE.daysPerWeek;
   for (let i = 0; i < 2 && s.ap >= BALANCE.apCost.baito; i++) {
     s.ap -= BALANCE.apCost.baito;
-    s.coins += Math.round(runHook(s, 'onBaito', baitoCoins()) * upBaitoMult(s));
+    const w = Math.round(runHook(s, 'onBaito', baitoCoins()) * upBaitoMult(s) * (FATIGUE ? BALANCE.baitoFatigue[Math.min(i, BALANCE.baitoFatigue.length - 1)] : 1));
+    s.coins += w;
+    track(s, 'baito', w);
     if (Math.random() < BAITO_BONUS_RATE) s.jarBonusWeek += 1;
   }
   const payday = daysLeft === 0;
@@ -139,7 +158,7 @@ function playDay(s: GameState, st: Strategy): void {
     if (payday && s.coins < s.quota) {
       // 返済日：高く売れる順に、ノルマに届くまで売る
       const keys = Object.keys(s.inventory).sort((a, b) => sellPrice(s, b) - sellPrice(s, a));
-      for (const k of keys) if (canSell(s, k)) while ((s.inventory[k] ?? 0) > 0 && s.coins < s.quota) sellOne(s, k);
+      for (const k of keys) if (canSell(s, k)) while ((s.inventory[k] ?? 0) > 0 && s.coins < s.quota) sell1(s, k);
     }
     sellWhere(s, (k) => st.shouldSell(s, k, daysLeft));
   }
@@ -191,6 +210,8 @@ const strategies: Strategy[] = [
 ];
 
 for (const st of strategies) {
+  INC.baito = INC.sales = INC.gacha = 0;
+  INC1.baito = INC1.sales = INC1.gacha = 0;
   const hist = new Array(MAX_WEEKS + 1).fill(0);
   const ratio: number[][] = Array.from({ length: MAX_WEEKS }, () => []);
   for (let i = 0; i < RUNS; i++) {
@@ -212,4 +233,8 @@ for (const st of strategies) {
     );
     if (ok <= 0) break;
   }
+  const profit = INC.sales - INC.gacha;
+  console.log(`  収入の内訳（5 週目まで・1 ランあたり）：バイト ${Math.round(INC.baito / RUNS)} ／ 売上 ${Math.round(INC.sales / RUNS)} − ガチャ代 ${Math.round(INC.gacha / RUNS)} ＝ 商売の利益 ${Math.round(profit / RUNS)}（バイトの ${(profit / Math.max(1, INC.baito)).toFixed(1)} 倍）`);
+  const p1 = INC1.sales - INC1.gacha;
+  console.log(`  1 週目だけ：バイト ${Math.round(INC1.baito / RUNS)} ／ 商売の利益 ${Math.round(p1 / RUNS)}（売上 ${Math.round(INC1.sales / RUNS)} − ガチャ代 ${Math.round(INC1.gacha / RUNS)}）`);
 }

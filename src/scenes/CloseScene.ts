@@ -75,7 +75,8 @@ export class CloseScene extends Phaser.Scene {
     const net = s.coins - d.coinsAtStart;
     const rows: [string, number, string][] = [
       ['ガチャ', -d.gachaSpent, `${d.pulls}回`],
-      ['売上', d.sales, ''],
+      // ガチャ代を引いた「商売の儲け」も見せる（売ることの手応え）
+      ['売上', d.sales, d.sales > 0 || d.gachaSpent > 0 ? `儲け ${d.sales - d.gachaSpent >= 0 ? '+' : ''}${fmt(d.sales - d.gachaSpent)}` : ''],
       ['バイト代', d.wages, ''],
     ];
     const lineY = (i: number) => 170 + i * 80;

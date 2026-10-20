@@ -14,6 +14,9 @@ import { Button, countUp, drawPlate, stamp, title, txt } from '../ui/widgets';
 
 const M = GAME_H / 2;
 
+/** 同じ日の n 回目（0 始まり）のバイトの給料倍率 */
+const fatigueMult = (n: number) => BALANCE.baitoFatigue[Math.min(n, BALANCE.baitoFatigue.length - 1)];
+
 export class BaitoScene extends Phaser.Scene {
   private def!: MiniGameDef;
   private board: MiniGameDef[] = [];
@@ -127,7 +130,8 @@ export class BaitoScene extends Phaser.Scene {
     });
     const cancel = new Button(this, 360, BOTTOM - 62, { w: 300, h: 80, color: PAL.plum, label: 'やめる', size: 28, onPress: () => this.leave() });
     c.add([start, cancel]);
-    c.add(txt(this, 360, bottom + 16, '貼り紙をタップして選ぶ', 22, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 5 }));
+    const tired = fatigueMult(S().today.baitos);
+    c.add(txt(this, 360, bottom + 16, tired < 1 ? `今日 ${S().today.baitos + 1} 回目：疲れて給料 ×${tired}` : '貼り紙をタップして選ぶ', 22, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 5 }));
   }
 
   private begin() {
@@ -135,6 +139,7 @@ export class BaitoScene extends Phaser.Scene {
     s.ap -= BALANCE.apCost.baito;
     s.lastBaito = this.def.id;
     s.baitoBoard = [];
+    s.today.baitos += 1;
     save();
     this.hud.refresh();
     const n = title(this, 360, M - 60, '3', 150, CSS.cream).setDepth(800);
@@ -183,7 +188,9 @@ export class BaitoScene extends Phaser.Scene {
     this.game_.destroy?.();
     const s = S();
     // 縁起物でバイト代が増減する
-    result.coins = Math.round(runHook(s, 'onBaito', result.coins) * upBaitoMult(s));
+    const fatigue = fatigueMult(s.today.baitos - 1);
+    result.coins = Math.round(runHook(s, 'onBaito', result.coins) * upBaitoMult(s) * fatigue);
+    if (fatigue < 1) result.summary = `${result.summary ?? ''}\n疲れていたので給料 ×${fatigue}`;
     s.coins += result.coins;
     s.today.wages += result.coins;
     // 縁起物が出たが、もう全部持っている場合はお金に替える
