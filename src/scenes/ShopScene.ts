@@ -503,9 +503,11 @@ export class ShopScene extends Phaser.Scene {
     }
     for (const g of groups) for (const c of g.slice(1)) this.tweens.add({ targets: c, x: g[0].x, y: g[0].y, duration: 180, ease: 'Quad.easeIn' });
     sfx.play('whoosh', { rate: 1.4 });
+    // 位置は消す前に控えておく（物理カプセルは消すと x / y を読めなくなる）
+    const spots = groups.map((g) => ({ x: g[0].x, y: g[0].y }));
     this.time.delayedCall(200, () => {
       groups.forEach((g, gi) => {
-        const { x, y } = g[0];
+        const { x, y } = spots[gi];
         for (const c of g) this.removeCapsule(c);
         const nc = this.spawnCapsule(x, y, r, 0, -6, true);
         nc.setScale(0.5);
@@ -518,7 +520,7 @@ export class ShopScene extends Phaser.Scene {
       sfx.play('pop', { rate: 0.9 + info.index * 0.1 });
       sfx.play('sparkle', { delay: 0.05 });
       vibrate(20);
-      const { x, y } = groups[0][0];
+      const { x, y } = spots[0];
       const sx = Phaser.Math.Clamp(x, 170, GAME_W - 170);
       const sy = Phaser.Math.Clamp(y - 80, this.jar.top + 110, this.jar.bottom - 100);
       stamp(this, sx, sy, sets > 1 ? `色違いが ${sets} つ！` : '3つそろって色違い！', 34, CSS.gold, { hold: 600, depth: 450 });
