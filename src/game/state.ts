@@ -32,6 +32,8 @@ export type GameState = {
   apMax: number;
   quota: number;
   machineId: string;
+  /** 店に設置済みのガチャ機（切り替えて使える） */
+  machines: string[];
   /** 瓶の中のカプセル（位置は保存しない。再開時は上から降らせる） */
   jar: Rarity[];
   /** jar と同じ並び。true は色違いカプセル */
@@ -86,6 +88,7 @@ export function newGame(): GameState {
     apMax: BALANCE.apPerDay,
     quota: BALANCE.firstQuota,
     machineId: 'hand',
+    machines: ['hand'],
     jar: [],
     jarShiny: [],
     jarCapacityBase: BALANCE.jarCapacity,
@@ -261,6 +264,7 @@ export function loadSave(): GameState | null {
     s.relicGachaWeek ??= 0;
     s.upgrades ??= {};
     s.autoCrankOn ??= true;
+    s.machines ??= ['hand'];
     s.events ??= initEvents();
     s.jarShiny ??= s.jar.map(() => false);
     s.today.shuffles ??= 0;

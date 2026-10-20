@@ -103,7 +103,7 @@ class HandCrankMachine implements MachineView {
     // てっぺんのフタ
     glass.fillStyle(PAL.ink, 1);
     glass.fillRoundedRect(CX - 46, T - 4, 92, 28, 12);
-    glass.fillStyle(PAL.vermilion, 1);
+    glass.fillStyle(def.accent ?? PAL.vermilion, 1);
     glass.fillRoundedRect(CX - 41, T + 1, 82, 18, 8);
     glass.fillStyle(PAL.ink, 1);
     glass.fillCircle(CX, T - 10, 11);
@@ -218,7 +218,7 @@ class HandCrankMachine implements MachineView {
     drawPlate(tg, -56, 30, 100, 64, PAL.paper, { radius: 8, shadow: 4, outline: 4, shine: false });
     tg.fillStyle(PAL.ink, 1);
     tg.fillCircle(-6, 38, 4);
-    const tt1 = txt(scene, -6, 56, '1回', 18, { color: CSS.inkSoft });
+    const tt1 = txt(scene, -6, 56, def.capsulesPerPull > 1 ? `${def.capsulesPerPull}個` : '1回', 18, { color: CSS.inkSoft });
     const tt2 = txt(scene, -6, 80, `${def.cost}`, 28, { color: CSS.bad });
     this.priceText = tt2;
     this.tag.add([tg, tt1, tt2]).setAngle(-8);

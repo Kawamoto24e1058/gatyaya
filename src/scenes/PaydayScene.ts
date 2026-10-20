@@ -4,10 +4,12 @@ import { BALANCE, BOTTOM, CSS, GAME_H, GAME_W, PAL } from '../config';
 import { sfx } from '../core/audio';
 import { fmt } from '../core/util';
 import { addRelic, advanceDay, dueAmount, payDebt, S, saveNow } from '../game/state';
+import { recordClear, recordWeek } from '../game/meta';
+import { MACHINE_BY_ID } from '../data/machines';
 import { paydayOffer } from '../game/relics';
 import { showRelicPicker } from '../ui/RelicPicker';
 import { Collector } from '../ui/Collector';
-import { Button, countUp, drawPlate, stamp, title, txt } from '../ui/widgets';
+import { Button, countUp, drawPlate, stamp, title, toast, txt } from '../ui/widgets';
 
 export class PaydayScene extends Phaser.Scene {
   constructor() {
@@ -81,6 +83,14 @@ export class PaydayScene extends Phaser.Scene {
       if (ok) {
         payDebt(s);
         const cleared = s.week > BALANCE.weeksPerTown;
+        // 周回をまたぐ記録（ガチャ機の解禁）
+        const unlocked = [...recordWeek(s.week), ...(cleared ? recordClear() : [])];
+        if (unlocked.length > 0) {
+          this.time.delayedCall(1400, () => {
+            sfx.play('fanfare');
+            toast(this, `新しいガチャ機が解禁！\n${unlocked.map((id) => MACHINE_BY_ID[id].name).join('・')}（夜の改装で設置できる）`, GAME_H / 2 - 260);
+          });
+        }
         countUp(this, coinsBefore, s.coins, 600, (v) => coinT.setText(fmt(v)));
         col.satisfied();
         say(cleared ? '…ちっ、全部返されちまった。\nこの町じゃもう取り立てられねぇ' : '…確かに。また来週な', 0);

@@ -10,6 +10,7 @@ import { Capsule } from '../game/Capsule';
 import { adjustedSeriesWeights } from '../game/events';
 import { planFusion } from '../game/fusion';
 import { RELIC_BY_ID, rollRelics, runHook } from '../game/relics';
+import { recordPulls, recordRarity } from '../game/meta';
 import { pullRelicGacha, RELIC_GACHA, relicGachaBlocked, relicGachaPrice } from '../game/relicGacha';
 import { upAttract, upAutoCrank, upAutoFuse, upAutoOpen, upRapid, upRarityWeights, upStirInterval, upTwinChance } from '../game/upgrades';
 import { showKawaraban } from '../ui/Kawaraban';
@@ -70,7 +71,7 @@ export class ShopScene extends Phaser.Scene {
   private lastKnockAt = 0;
   private closeArmedUntil = 0;
   private revealing = 0;
-  private restoreQueue: { r: Rarity; shiny: boolean }[] = [];
+  private restoreQueue: { r: Rarity; shiny: boolean; nightTo?: Rarity }[] = [];
   private relicShelf?: Phaser.GameObjects.Container;
   private coach?: Coach;
   private machineTop = 0;
@@ -80,6 +81,7 @@ export class ShopScene extends Phaser.Scene {
   private nextStirAt = 0;
   private nextAuto = { crank: 0, open: 0, fuse: 0 };
   private autoSign?: Phaser.GameObjects.Container;
+  private machineSwitch?: Phaser.GameObjects.Container;
   private clusterSince = new Map<Capsule, number>();
   private lastClusterCheck = 0;
   private btnShuffle!: Button;
@@ -97,6 +99,7 @@ export class ShopScene extends Phaser.Scene {
     this.lastClusterCheck = 0;
     this.relicShelf = undefined;
     this.autoSign = undefined;
+    this.machineSwitch = undefined;
     this.nextAuto = { crank: 0, open: 0, fuse: 0 };
     this.shelfKey = null;
 
@@ -104,17 +107,9 @@ export class ShopScene extends Phaser.Scene {
     const top = Hud.bottom();
     const machineTop = top + 34 + Math.round(EXTRA_H * 0.3);
     this.btnY = BOTTOM - BTN_H / 2 - 18;
-    this.def = MACHINE_BY_ID[S().machineId];
-    this.machine = createMachineView(
-      this,
-      this.def,
-      {
-        canPull: () => this.canPull(),
-        onPull: () => this.pull(),
-        onDenied: (reason) => toast(this, reason, this.jar.top + 90),
-      },
-      { top: machineTop },
-    );
+    this.def = MACHINE_BY_ID[S().machineId] ?? MACHINE_BY_ID.hand;
+    this.machineTop = machineTop;
+    this.buildMachine();
     this.jar = { left: 52, right: 668, top: this.machine.bottom + 22, bottom: this.btnY - BTN_H / 2 - 30 };
 
     this.drawBackground(top);
@@ -147,12 +142,18 @@ export class ShopScene extends Phaser.Scene {
 
     // 保存済みのカプセルを上から降らせる
     // 降らせ終わるまでは、まだ出していない分もセーブに残す（途中でアプリを閉じても消えないように）
-    this.restoreQueue = S().jar.map((r, i) => ({ r, shiny: S().jarShiny[i] ?? false }));
+    // 夜に化けたカプセルは、朝の演出で化けるまで元の姿で出しておく
+    const changed = new Set(S().nightChanges);
+    this.restoreQueue = S().jar.map((r, i) => {
+      const from = changed.has(i) ? RARITIES[RARITY_INFO[r].index - 1] : undefined;
+      return from ? { r: from, shiny: S().jarShiny[i] ?? false, nightTo: r } : { r, shiny: S().jarShiny[i] ?? false };
+    });
     this.restoreQueue.forEach((_, i) => {
       this.time.delayedCall(i * 70, () => {
         const next = this.restoreQueue.shift();
         if (!next) return;
-        this.spawnCapsule(Phaser.Math.Between(this.jar.left + 60, this.jar.right - 60), this.jar.top + 10, next.r, 0, 2, next.shiny);
+        const c = this.spawnCapsule(Phaser.Math.Between(this.jar.left + 60, this.jar.right - 60), this.jar.top + 10, next.r, 0, 2, next.shiny);
+        if (next.nightTo) this.markNightChange(c, next.nightTo);
         this.refreshUI(false);
       });
     });
@@ -300,6 +301,7 @@ export class ShopScene extends Phaser.Scene {
     const s = S();
     this.hud.refresh(animateHud);
     this.renderAutoSign();
+    this.renderMachineSwitch();
     const full = this.capsules.length >= jarCapacity(s);
     this.jarLabel.setText(`瓶 ${this.capsules.length}/${jarCapacity(s)}`);
     this.jarLabel.setColor(full ? CSS.bad : CSS.ink);
@@ -320,8 +322,73 @@ export class ShopScene extends Phaser.Scene {
   private canPull(): true | string {
     const s = S();
     if (s.coins < pullCost(s, this.def.cost)) return 'コインが足りない…\n景品を売るかバイトで稼ごう';
-    if (this.capsules.length + this.restoreQueue.length >= jarCapacity(s)) return '瓶がいっぱい！\nタップで開けるか、合体させて空けよう';
+    const free = jarCapacity(s) - this.capsules.length - this.restoreQueue.length;
+    if (free <= 0) return '瓶がいっぱい！\nタップで開けるか、合体させて空けよう';
+    if (free < this.def.capsulesPerPull) return `瓶の空きが足りない！\n${this.def.name}は 1 回で ${this.def.capsulesPerPull} 個出る`;
     return true;
+  }
+
+  /** ガチャ機の見た目を作る（切り替えのときも使う） */
+  private buildMachine() {
+    this.machine = createMachineView(
+      this,
+      this.def,
+      {
+        canPull: () => this.canPull(),
+        onPull: () => this.pull(),
+        onDenied: (reason) => toast(this, reason, this.jar.top + 90),
+      },
+      { top: this.machineTop },
+    );
+    this.machine.setPrice?.(pullCost(S(), this.def.cost));
+  }
+
+  /** 設置済みのガチャ機を順に切り替える */
+  private switchMachine(dir: 1 | -1) {
+    const s = S();
+    if (s.machines.length < 2) return;
+    const i = s.machines.indexOf(this.def.id);
+    const next = s.machines[(i + dir + s.machines.length) % s.machines.length];
+    s.machineId = next;
+    save();
+    this.machine.destroy();
+    this.def = MACHINE_BY_ID[next];
+    this.buildMachine();
+    sfx.play('whoosh', { rate: 0.9 });
+    sfx.play('goton', { delay: 0.12, rate: 0.8 });
+    this.cameras.main.shake(160, 0.004);
+    this.refreshUI();
+  }
+
+  /** 店の右側：ガチャ機の切り替え札（2 台以上あるときだけ） */
+  private renderMachineSwitch() {
+    const s = S();
+    if (s.machines.length < 2) return;
+    if (!this.machineSwitch) {
+      const c = this.add.container(628, this.jar.top - 74).setDepth(95);
+      const g = this.add.graphics();
+      drawPlate(g, -84, -30, 168, 60, PAL.night, { radius: 10, shadow: 4, outline: 4, shine: false });
+      const label = txt(this, 0, 2, '', 18, { color: CSS.gold, wrap: 120 });
+      const left = txt(this, -68, 0, '‹', 34, { color: CSS.cream });
+      const right = txt(this, 68, 0, '›', 34, { color: CSS.cream });
+      c.add([g, label, left, right]);
+      c.setSize(168, 60).setInteractive({ useHandCursor: true });
+      c.on('pointerdown', (p: Phaser.Input.Pointer) => this.switchMachine(p.worldX < c.x ? -1 : 1));
+      c.setData('label', label);
+      this.machineSwitch = c;
+    }
+    (this.machineSwitch.getData('label') as Phaser.GameObjects.Text).setText(this.def.name);
+  }
+
+  /** 新しいガチャ機が解禁されたら知らせる */
+  private announceUnlocks(ids: string[]) {
+    ids.forEach((id, n) => {
+      this.time.delayedCall(600 + n * 1600, () => {
+        sfx.play('fanfare');
+        stamp(this, 360, this.jar.top + 120, '新しいガチャ機が解禁！', 40, CSS.gold, { hold: 900, depth: 950 });
+        toast(this, `「${MACHINE_BY_ID[id].name}」を夜の改装で設置できるようになった`, this.jar.top + 220);
+      });
+    });
   }
 
   /** ハンドル 1 回転。機材「連射ハンドル」があれば続けて出す（1 個ずつ代金と瓶の空きを確かめる） */
@@ -356,36 +423,46 @@ export class ShopScene extends Phaser.Scene {
     }
 
     // まれに黒いカプセル（縁起物入り）
-    if (Math.random() < BALANCE.blackCapsuleRate && rollRelics(s, 3, ['common', 'rare']).length > 0) {
+    if (Math.random() < BALANCE.blackCapsuleRate * this.def.capsulesPerPull && rollRelics(s, 3, ['common', 'rare']).length > 0) {
       this.blackCapsule();
       this.refreshUI();
       save();
       return;
     }
 
+    this.announceUnlocks(recordPulls(1));
+    // 1 回で複数出る機種は少しずつ間を空けて出す
+    for (let k = 1; k < this.def.capsulesPerPull; k++) this.time.delayedCall(k * 170, () => this.dispenseOne());
+    this.dispenseOne();
+    // 改装「おまけ玉の仕掛け」：出た 1 個ごとに、ときどきもう 1 個（代金なし）
+    for (let k = 0; k < this.def.capsulesPerPull; k++) {
+      if (Math.random() >= upTwinChance(s)) continue;
+      this.time.delayedCall(260 + (this.def.capsulesPerPull + k) * 170, () => {
+        if (this.capsules.length + this.restoreQueue.length >= jarCapacity(s)) return;
+        this.dispenseOne(true);
+      });
+    }
+    this.tutorial('pulled');
+    this.refreshUI();
+    save();
+  }
+
+  /** カプセルを 1 個出す */
+  private dispenseOne(bonus = false) {
+    const s = S();
     const rolled = weightedPick(upRarityWeights(s, this.def.rarityWeights));
     const rarity = runHook(s, 'onGachaRoll', rolled, { machineId: this.def.id });
     const out = this.machine.outlet;
     const c = this.spawnCapsule(out.x + Phaser.Math.Between(-6, 6), out.y, rarity, Phaser.Math.FloatBetween(-1.4, 1.4), 3);
+    if (bonus) {
+      sfx.play('goton', { rate: 1.3, vol: 0.7 });
+      floatText(this, out.x + 110, out.y - 20, 'おまけ玉！', CSS.gold, 26);
+    }
     // 飛び出しのスクワッシュ
     c.setScale(0.75);
     this.tweens.add({ targets: c, scale: 1, duration: 220, ease: 'Back.easeOut' });
     this.noteBest(rarity);
     this.rareDispenseFx(rarity, out.x, out.y);
-    // 改装「おまけ玉の仕掛け」：ときどきもう 1 個出る（代金なし）
-    if (Math.random() < upTwinChance(s)) {
-      this.time.delayedCall(260, () => {
-        if (this.capsules.length + this.restoreQueue.length >= jarCapacity(s)) return;
-        const r2 = runHook(s, 'onGachaRoll', weightedPick(upRarityWeights(s, this.def.rarityWeights)), { machineId: this.def.id });
-        this.spawnCapsule(out.x + Phaser.Math.Between(-6, 6), out.y, r2, Phaser.Math.FloatBetween(-1.4, 1.4), 3);
-        this.noteBest(r2);
-        sfx.play('goton', { rate: 1.3, vol: 0.7 });
-        floatText(this, out.x + 110, out.y - 20, 'おまけ玉！', CSS.gold, 26);
-        this.refreshUI();
-        save();
-      });
-    }
-    this.tutorial('pulled');
     this.refreshUI();
     save();
   }
@@ -424,6 +501,7 @@ export class ShopScene extends Phaser.Scene {
   private noteBest(r: Rarity) {
     const s = S();
     if (!s.totals.bestRarity || RARITY_INFO[r].index > RARITY_INFO[s.totals.bestRarity].index) s.totals.bestRarity = r;
+    this.announceUnlocks(recordRarity(r));
   }
 
   private spawnCapsule(x: number, y: number, r: Rarity, vx = 0, vy = 0, shiny = false): Capsule {
@@ -444,7 +522,8 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private syncJar() {
-    S().jar = [...this.capsules.map((c) => c.rarity), ...this.restoreQueue.map((q) => q.r)];
+    // 化ける演出待ちのカプセルは、化けた後のレア度で保存する
+    S().jar = [...this.capsules.map((c) => (c.getData('nightTo') as Rarity | undefined) ?? c.rarity), ...this.restoreQueue.map((q) => q.nightTo ?? q.r)];
     S().jarShiny = [...this.capsules.map((c) => c.shiny), ...this.restoreQueue.map((q) => q.shiny)];
   }
 
@@ -695,13 +774,22 @@ export class ShopScene extends Phaser.Scene {
   // ---------- 夜のうちに化ける ----------
 
   /** 昨夜化けたカプセルを、朝に「ガタガタ → ポンッ」と見せる（状態はすでに advanceDay で更新済み） */
+  /** 夜に化けたカプセルに印を付ける。演出まで合成・開封されないよう busy にしておく */
+  private markNightChange(c: Capsule, to: Rarity) {
+    c.setData('nightTo', to);
+    c.busy = true;
+  }
+
   private playNightChanges() {
     const s = S();
-    const idx = s.nightChanges;
-    if (idx.length === 0) return;
     s.nightChanges = [];
     save();
-    const targets = idx.map((i) => ({ i, c: this.capsules[i] })).filter((t) => t.c && t.c.active && !t.c.busy);
+    // 瓶に戻しきる前なら少し待つ
+    if (this.restoreQueue.length > 0) {
+      this.time.delayedCall(300, () => this.playNightChanges());
+      return;
+    }
+    const targets = this.capsules.filter((c) => c.active && c.getData('nightTo'));
     if (targets.length === 0) return;
 
     toast(this, '夜のうちに、瓶の中で何かが…', this.jar.top + 90);
@@ -709,15 +797,15 @@ export class ShopScene extends Phaser.Scene {
     // 瓶がガタガタ揺れる
     for (let k = 0; k < 6; k++) {
       this.time.delayedCall(k * 120, () => {
-        for (const { c } of targets) if (c.active) c.setVelocity(Phaser.Math.FloatBetween(-3, 3), -Phaser.Math.FloatBetween(2, 5));
+        for (const c of targets) if (c.active) c.setVelocity(Phaser.Math.FloatBetween(-3, 3), -Phaser.Math.FloatBetween(2, 5));
         sfx.play('knock', { rate: 0.8 + k * 0.05 });
       });
     }
     this.cameras.main.shake(700, 0.003);
-    targets.forEach(({ i, c }, n) => {
+    targets.forEach((c, n) => {
       this.time.delayedCall(1000 + n * 800, () => {
         if (!c.active) return;
-        const nr = S().jar[i] ?? c.rarity;
+        const nr = c.getData('nightTo') as Rarity;
         const old = c.rarity;
         const nc = this.replaceCapsule(c, nr);
         this.transformFx(nc.x, nc.y, old, nr);
@@ -725,7 +813,6 @@ export class ShopScene extends Phaser.Scene {
     });
   }
 
-  /** 同じ位置・同じ並び順のまま、別レア度のカプセルに差し替える */
   private replaceCapsule(c: Capsule, r: Rarity): Capsule {
     const i = this.capsules.indexOf(c);
     const nc = new Capsule(this, c.x, c.y, r, c.shiny);
@@ -1282,6 +1369,13 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private onWake() {
+    // 寝ている間（閉店→翌朝）に化けたカプセルへ印を付ける。瓶の中身が動く前に済ませる
+    const s = S();
+    for (const i of s.nightChanges) {
+      const c = this.capsules[i];
+      const to = s.jar[i];
+      if (c && c.active && to && c.rarity !== to) this.markNightChange(c, to);
+    }
     this.machine.setInputEnabled(true);
     this.closeArmedUntil = 0;
     this.refreshUI();

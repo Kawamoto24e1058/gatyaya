@@ -42,7 +42,8 @@ const sell1 = (s: GameState, key: string) => {
   track(s, 'sales', v);
   return v;
 };
-const machine = MACHINE_BY_ID.hand;
+// 機種を変えて試す：MACHINE=kin npm run sim
+const machine = MACHINE_BY_ID[process.env.MACHINE ?? 'hand'];
 console.log(`ガチャ ${machine.cost} / 初期 ${BALANCE.startCoins} / ノルマ ${BALANCE.firstQuota} ×${BALANCE.quotaGrowth}`);
 
 // ---- 近似モデル（実機の体感に合わせて調整する） ----
@@ -70,19 +71,23 @@ function pull(s: GameState) {
   s.today.pulls += 1;
   s.totals.pulls += 1;
   // 黒いカプセル：縁起物をランダムに 1 つ取る（近似）
-  if (USE_RELICS && Math.random() < BALANCE.blackCapsuleRate) {
+  if (USE_RELICS && Math.random() < BALANCE.blackCapsuleRate * machine.capsulesPerPull) {
     const r = rollRelics(s, 3, ['common', 'rare']);
     if (r.length) {
       addRelic(s, pick(r).id);
       return;
     }
   }
-  s.jar.push(runHook(s, 'onGachaRoll', weightedPick(upRarityWeights(s, machine.rarityWeights))));
-  s.jarShiny.push(false);
-  // 改装「おまけ玉」
-  if (Math.random() < upTwinChance(s) && s.jar.length < jarCapacity(s)) {
+  for (let k = 0; k < machine.capsulesPerPull; k++) {
     s.jar.push(runHook(s, 'onGachaRoll', weightedPick(upRarityWeights(s, machine.rarityWeights))));
     s.jarShiny.push(false);
+  }
+  // 改装「おまけ玉」：出た 1 個ごとに抽選
+  for (let k = 0; k < machine.capsulesPerPull; k++) {
+    if (Math.random() < upTwinChance(s) && s.jar.length < jarCapacity(s)) {
+      s.jar.push(runHook(s, 'onGachaRoll', weightedPick(upRarityWeights(s, machine.rarityWeights))));
+      s.jarShiny.push(false);
+    }
   }
 }
 
@@ -116,9 +121,9 @@ function openAll(s: GameState) {
 }
 
 function pullAll(s: GameState, reserve: number) {
-  while (s.coins - pullCost(s, machine.cost) >= reserve && s.jar.length < jarCapacity(s)) {
+  while (s.coins - pullCost(s, machine.cost) >= reserve && s.jar.length + machine.capsulesPerPull <= jarCapacity(s)) {
     pull(s);
-    if (s.jar.length >= jarCapacity(s)) fuseJar(s);
+    if (s.jar.length + machine.capsulesPerPull > jarCapacity(s)) fuseJar(s);
   }
   fuseJar(s);
 }

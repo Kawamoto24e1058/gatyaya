@@ -1,10 +1,12 @@
-// 夜の改装：閉店後にコインで店（改装）とガチャ機（機材）を強化する画面
+// 夜の改装：閉店後にコインで店（改装）・機材・ガチャ機の設置をする画面
 import Phaser from 'phaser';
 import { CSS, GAME_H, GAME_W, PAL } from '../config';
 import { sfx } from '../core/audio';
 import { fmt } from '../core/util';
 import { daysUntilPayday, dueAmount, S, saveNow } from '../game/state';
-import { buyUpgrade, nextUpgradeCost, upgradeLevel, UPGRADES, type UpgradeDef } from '../game/upgrades';
+import { buyUpgrade, nextUpgradeCost, upgradeLevel, UPGRADES } from '../game/upgrades';
+import { MACHINES } from '../data/machines';
+import { getMeta, isUnlocked, UNLOCKS } from '../game/meta';
 import { Button, drawPlate, stamp, title, txt } from './widgets';
 
 export function showUpgradePanel(scene: Phaser.Scene, onClose: () => void) {
@@ -14,7 +16,8 @@ export function showUpgradePanel(scene: Phaser.Scene, onClose: () => void) {
   const rowH = 128;
   const maxRows = Math.max(...(['shop', 'machine'] as const).map((c) => UPGRADES.filter((u) => u.cat === c).length));
   const top = GAME_H / 2 - (maxRows * rowH) / 2 + 10;
-  let tab: UpgradeDef['cat'] = 'shop';
+  type Tab = 'shop' | 'machine' | 'gacha';
+  let tab: Tab = 'shop';
   root.add(title(scene, 360, top - 170, '夜の改装', 48, CSS.gold));
   const coinT = txt(scene, 360, top - 118, '', 24, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 5 });
   root.add(coinT);
@@ -22,12 +25,13 @@ export function showUpgradePanel(scene: Phaser.Scene, onClose: () => void) {
   root.add(rows);
 
   // タブ：店の改装 ／ ガチャ機の機材
-  const tabs = (['shop', 'machine'] as const).map((c, i) => {
-    const b = new Button(scene, 250 + i * 220, top - 50, {
-      w: 200,
+  const TAB_LABEL: Record<Tab, string> = { shop: '店の改装', machine: '機材', gacha: 'ガチャ機' };
+  const tabs = (['shop', 'machine', 'gacha'] as const).map((c, i) => {
+    const b = new Button(scene, 150 + i * 210, top - 50, {
+      w: 196,
       h: 64,
       color: PAL.wood,
-      label: c === 'shop' ? '店の改装' : 'ガチャ機材',
+      label: TAB_LABEL[c],
       size: 24,
       onPress: () => {
         tab = c;
@@ -43,6 +47,10 @@ export function showUpgradePanel(scene: Phaser.Scene, onClose: () => void) {
     for (const t of tabs) t.b.setAlpha(t.c === tab ? 1 : 0.55).setScale(t.c === tab ? 1.04 : 0.96);
     const days = daysUntilPayday(s);
     coinT.setText(`所持 ${fmt(s.coins)} コイン　／　返済 ${fmt(dueAmount(s))}（${days === 0 ? '明日' : `あと ${days} 日`}）`);
+    if (tab === 'gacha') {
+      renderMachines();
+      return;
+    }
     UPGRADES.filter((u) => u.cat === tab).forEach((u, i) => {
       const y = top + i * rowH + rowH / 2;
       const lv = upgradeLevel(s, u.id);
@@ -87,6 +95,52 @@ export function showUpgradePanel(scene: Phaser.Scene, onClose: () => void) {
       }
     });
   };
+  /** ガチャ機の設置：解禁済みなら買える。未解禁は条件を見せる */
+  const renderMachines = () => {
+    const meta = getMeta();
+    MACHINES.filter((m) => m.id !== 'hand').forEach((m, i) => {
+      const y = top + i * rowH + rowH / 2;
+      const owned = s.machines.includes(m.id);
+      const open = isUnlocked(m.id);
+      const g = scene.add.graphics();
+      drawPlate(g, 30, y - rowH / 2 + 6, 660, rowH - 12, open ? PAL.paper : PAL.paperShade, { radius: 14, shadow: 5, outline: 4, shine: false });
+      drawPlate(g, 46, y - 38, 76, 76, open ? m.bodyColor : 0x6e6878, { radius: 14, shadow: 0, outline: 4, shine: false });
+      rows.add(g);
+      rows.add(txt(scene, 84, y, open ? '機' : '？', 38, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 5 }));
+      rows.add(txt(scene, 140, y - 32, open ? `${m.name}（1 回 ${m.cost}）` : '？？？', 24, { originX: 0, color: CSS.ink }));
+      const u = UNLOCKS.find((x) => x.machineId === m.id);
+      const line = open ? (m.blurb ?? '') : `解禁：${u?.text ?? '？'}（${u?.progress(meta) ?? ''}）`;
+      rows.add(txt(scene, 140, y + 14, line, 19, { originX: 0, color: open ? CSS.ink : CSS.inkSoft, bold: false, wrap: 360, align: 'left' }));
+      if (owned) {
+        rows.add(txt(scene, 596, y, '設置済み', 24, { color: CSS.good }));
+      } else if (open && m.installCost) {
+        const cost = m.installCost;
+        const b = new Button(scene, 596, y, {
+          w: 150,
+          h: 84,
+          color: PAL.vermilion,
+          label: '設置',
+          sub: fmt(cost),
+          size: 26,
+          onPress: () => {
+            if (s.coins < cost || s.machines.includes(m.id)) return;
+            s.coins -= cost;
+            s.machines.push(m.id);
+            saveNow();
+            sfx.play('goton', { rate: 0.7 });
+            sfx.play('fanfare', { delay: 0.1, vol: 0.7 });
+            stamp(scene, 360, y, `${m.name} 設置！`, 36, CSS.gold, { hold: 600, depth: 3100 });
+            render();
+          },
+          onDenied: () => undefined,
+        });
+        b.setEnabled(s.coins >= cost);
+        rows.add(b);
+      }
+    });
+    rows.add(txt(scene, 360, top + (MACHINES.length - 1) * rowH + 24, '設置したガチャ機は、店の右の札 ‹ › で切り替えられる', 20, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 4 }));
+  };
+
   render();
 
   const close = new Button(scene, 360, top + maxRows * rowH + 60, { w: 300, h: 88, color: PAL.plum, label: '閉じる', size: 30, onPress: () => {
