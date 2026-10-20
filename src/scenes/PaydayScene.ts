@@ -1,10 +1,15 @@
-// 返済日：ノルマ未達ならゲームオーバー
+// 返済日：取り立て屋が現れる。ノルマ未達ならゲームオーバー
 import Phaser from 'phaser';
-import { CSS, GAME_W } from '../config';
+import { BALANCE, BOTTOM, CSS, GAME_H, GAME_W, PAL } from '../config';
 import { sfx } from '../core/audio';
 import { fmt } from '../core/util';
-import { advanceDay, payDebt, S, saveNow } from '../game/state';
-import { Button, countUp, panel, txt } from '../ui/widgets';
+import { addRelic, advanceDay, dueAmount, payDebt, S, saveNow } from '../game/state';
+import { recordClear, recordWeek } from '../game/meta';
+import { MACHINE_BY_ID } from '../data/machines';
+import { paydayOffer } from '../game/relics';
+import { showRelicPicker } from '../ui/RelicPicker';
+import { Collector } from '../ui/Collector';
+import { Button, countUp, drawPlate, stamp, title, toast, txt } from '../ui/widgets';
 
 export class PaydayScene extends Phaser.Scene {
   constructor() {
@@ -13,55 +18,106 @@ export class PaydayScene extends Phaser.Scene {
 
   create() {
     const s = S();
-    this.add.rectangle(360, 640, GAME_W, 1280, 0x120c22, 1);
-    txt(this, 360, 150, '返済日', 72, { color: CSS.bad, stroke: '#000000', strokeThickness: 8 });
-    txt(this, 360, 230, `第${s.week}週`, 30, { color: CSS.sub });
+    this.add.image(0, 0, 'bg_night').setOrigin(0);
+    title(this, 360, Math.max(90, GAME_H * 0.07), `第${s.week}週 返済日`, 52, '#f2a090').setDepth(30);
 
-    panel(this, 360, 520, 600, 420, 0x2f2450);
-    txt(this, 120, 380, '今週の返済', 30, { originX: 0, color: CSS.cream });
-    txt(this, 600, 380, fmt(s.quota), 44, { originX: 1, color: CSS.bad });
-    txt(this, 120, 460, '所持コイン', 30, { originX: 0, color: CSS.cream });
-    const coinT = txt(this, 600, 460, fmt(s.coins), 44, { originX: 1, color: CSS.gold });
+    // 取り立て屋が暗がりからせり上がる
+    const collectorY = GAME_H * 0.38;
+    const col = new Collector(this, 360, GAME_H + 400).setDepth(5).setScale(0.9);
+    sfx.play('rumble');
+    this.tweens.add({ targets: col, y: collectorY, duration: 900, ease: 'Cubic.easeOut' });
+    this.time.addEvent({ delay: 2200, loop: true, callback: () => col.blink() });
 
-    const quota = s.quota;
+    const quota = dueAmount(s);
     const coinsBefore = s.coins;
     const ok = coinsBefore >= quota;
 
-    const bar = this.add.graphics();
+    // 吹き出し
+    const say = (msg: string, delay: number) => {
+      this.time.delayedCall(delay, () => {
+        const c = this.add.container(360, collectorY - 330).setDepth(40);
+        const t = txt(this, 0, 0, msg, 28, { color: CSS.ink, wrap: 520 });
+        const w = t.width + 56;
+        const h = t.height + 30;
+        const g = this.add.graphics();
+        drawPlate(g, -w / 2, -h / 2, w, h, PAL.paper, { radius: 26, shadow: 6, outline: 5, shine: false });
+        g.fillStyle(PAL.ink, 1);
+        g.fillTriangle(-20, h / 2 + 3, 20, h / 2 + 3, 30, h / 2 + 30);
+        g.fillStyle(PAL.paper, 1);
+        g.fillTriangle(-12, h / 2 - 2, 12, h / 2 - 2, 22, h / 2 + 18);
+        c.add([g, t]);
+        c.setScale(0.5).setAlpha(0);
+        this.tweens.add({ targets: c, scale: 1, alpha: 1, duration: 180, ease: 'Back.easeOut' });
+        this.time.delayedCall(1900, () => this.tweens.add({ targets: c, alpha: 0, duration: 200, onComplete: () => c.destroy() }));
+      });
+    };
+    say(`ヒッヒ…今週の分、\n${fmt(quota)}コイン払ってもらおうか`, 900);
+
+    // 帳簿パネル
+    const py = GAME_H * 0.64;
+    const pg = this.add.graphics().setDepth(20);
+    drawPlate(pg, 70, py - 110, 580, 250, PAL.paper, { radius: 16, shadow: 8, outline: 5, shine: false });
+    pg.fillStyle(PAL.blood, 1);
+    pg.fillRect(70, py - 110, 580, 40);
+    txt(this, 360, py - 90, '借用書', 24, { color: CSS.cream }).setDepth(21);
+    txt(this, 110, py - 26, '今週の返済', 28, { originX: 0, color: CSS.ink }).setDepth(21);
+    txt(this, 610, py - 26, fmt(quota), 42, { originX: 1, color: CSS.bad }).setDepth(21);
+    txt(this, 110, py + 34, '所持コイン', 28, { originX: 0, color: CSS.ink }).setDepth(21);
+    const coinT = txt(this, 610, py + 34, fmt(coinsBefore), 42, { originX: 1, color: '#c08a1a' }).setDepth(21);
+    const bar = this.add.graphics().setDepth(21);
     const drawBar = (v: number) => {
       bar.clear();
-      bar.fillStyle(0x000000, 0.4);
-      bar.fillRoundedRect(110, 540, 500, 30, 15);
-      bar.fillStyle(v >= 1 ? 0x4fd18b : 0xffc531, 1);
-      bar.fillRoundedRect(110, 540, Math.max(30, 500 * Math.min(1, v)), 30, 15);
+      bar.fillStyle(PAL.ink, 1);
+      bar.fillRoundedRect(106, py + 82, 508, 30, 15);
+      bar.fillStyle(0x4a3a4e, 1);
+      bar.fillRoundedRect(110, py + 86, 500, 22, 11);
+      bar.fillStyle(v >= 1 ? PAL.moss : PAL.mustard, 1);
+      bar.fillRoundedRect(110, py + 86, Math.max(22, 500 * Math.min(1, v)), 22, 11);
     };
     drawBar(0);
     const o = { v: 0 };
-    this.tweens.add({
-      targets: o,
-      v: coinsBefore / quota,
-      duration: 1200,
-      delay: 400,
-      ease: 'Cubic.easeInOut',
-      onUpdate: () => drawBar(o.v),
-    });
-    for (let i = 0; i < 8; i++) this.time.delayedCall(400 + i * 140, () => sfx.play('tick', { rate: 0.9 + i * 0.08 }));
+    this.tweens.add({ targets: o, v: coinsBefore / quota, duration: 1200, delay: 1400, ease: 'Cubic.easeInOut', onUpdate: () => drawBar(o.v) });
+    for (let i = 0; i < 8; i++) this.time.delayedCall(1400 + i * 140, () => sfx.play('tick', { rate: 0.9 + i * 0.08 }));
 
-    this.time.delayedCall(1800, () => {
+    this.time.delayedCall(2900, () => {
       if (ok) {
         payDebt(s);
+        const cleared = s.week > BALANCE.weeksPerTown;
+        // 周回をまたぐ記録（ガチャ機の解禁）
+        const unlocked = [...recordWeek(s.week), ...(cleared ? recordClear() : [])];
+        if (unlocked.length > 0) {
+          this.time.delayedCall(1400, () => {
+            sfx.play('fanfare');
+            toast(this, `新しいガチャ機が解禁！\n${unlocked.map((id) => MACHINE_BY_ID[id].name).join('・')}（夜の改装で設置できる）`, GAME_H / 2 - 260);
+          });
+        }
         countUp(this, coinsBefore, s.coins, 600, (v) => coinT.setText(fmt(v)));
+        col.satisfied();
+        say(cleared ? '…ちっ、全部返されちまった。\nこの町じゃもう取り立てられねぇ' : '…確かに。また来週な', 0);
         sfx.play('reji');
         sfx.play('fanfare', { delay: 0.4 });
-        const t = txt(this, 360, 640, '返済完了！', 64, { color: CSS.good, stroke: '#000000', strokeThickness: 8 }).setScale(2);
-        this.tweens.add({ targets: t, scale: 1, duration: 250, ease: 'Back.easeOut' });
-        txt(this, 360, 800, `来週のノルマ ${fmt(s.quota)}`, 34, { color: CSS.cream });
-        // TODO(Phase 2): ここでレリックショップ（3 つから 1 つ選ぶ）へ
-        txt(this, 360, 860, 'ショップ（レリック）は Phase 2 で追加予定', 20, { color: CSS.sub, bold: false });
-        new Button(this, 360, 1100, {
+        stamp(this, 380, py + 96, cleared ? '完済' : '返済完了', cleared ? 96 : 64, CSS.good, { hold: Infinity, angle: -8, depth: 50 });
+        const leave = () => this.tweens.add({ targets: col, y: GAME_H + 400, duration: 900, ease: 'Cubic.easeIn' });
+        if (cleared) {
+          this.time.delayedCall(1600, leave);
+          this.time.delayedCall(700, () => sfx.play('fanfare', { rate: 1.12 }));
+          new Button(this, 360, BOTTOM - 80, {
+            w: 440,
+            h: 112,
+            color: PAL.mustard,
+            label: '完済の記録を見る',
+            onPress: () => {
+              this.scene.stop('Shop');
+              this.scene.start('GameOver', { cleared: true });
+            },
+          }).setDepth(60);
+          return;
+        }
+        txt(this, 360, py + 180, `来週のノルマ ${fmt(s.quota)}  （完済まであと${BALANCE.weeksPerTown - s.week + 1}週）`, 28, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 6 }).setDepth(30);
+        const next = new Button(this, 360, BOTTOM - 80, {
           w: 440,
           h: 112,
-          color: 0x4fd18b,
+          color: PAL.moss,
           label: '次の週へ',
           onPress: () => {
             advanceDay(s);
@@ -69,24 +125,57 @@ export class PaydayScene extends Phaser.Scene {
             this.scene.stop();
             this.scene.wake('Shop');
           },
+        })
+          .setDepth(60)
+          .setVisible(false);
+        // 取り立て屋の品：通常 2 つ＋訳あり 1 つから選ぶ（Slay the Spire のボス報酬にあたる）
+        const offer = paydayOffer(s);
+        this.time.delayedCall(2600, () => {
+          if (offer.length === 0) {
+            leave();
+            next.setVisible(true);
+            return;
+          }
+          say('ついでだ、こいつを持ってけ。\nタダとは言わねぇが…ヒッヒ', 0);
+          this.time.delayedCall(900, () =>
+            showRelicPicker(this, {
+              heading: '取り立て屋の品',
+              sub: '訳あり品は強いが、欠点がある',
+              relics: offer,
+              onDone: (r) => {
+                if (r) addRelic(s, r.id);
+                saveNow();
+                say(r ? (r.rarity === 'boss' ? 'ヒッヒ…毎度あり' : 'せいぜい稼ぐんだな') : 'ちっ、欲のねぇやつだ', 0);
+                this.time.delayedCall(1200, leave);
+                next.setVisible(true);
+              },
+            }),
+          );
         });
       } else {
+        col.furious();
         sfx.play('fail');
-        this.cameras.main.shake(300, 0.01);
-        const t = txt(this, 360, 820, '返済できなかった…', 56, { color: CSS.bad, stroke: '#000000', strokeThickness: 8 });
-        t.setAlpha(0);
-        this.tweens.add({ targets: t, alpha: 1, duration: 400 });
-        txt(this, 360, 910, `あと ${fmt(quota - coinsBefore)} 足りなかった`, 30, { color: CSS.cream });
-        new Button(this, 360, 1100, {
+        sfx.play('rumble', { rate: 0.8 });
+        say(`足りねぇなぁ…\nあと ${fmt(quota - coinsBefore)} だ`, 0);
+        this.cameras.main.shake(400, 0.01);
+        // 迫ってくる
+        this.tweens.add({ targets: col, scale: 1.6, y: collectorY + 120, duration: 1400, ease: 'Cubic.easeIn' });
+        const dim = this.add.rectangle(GAME_W / 2, GAME_H / 2, GAME_W, GAME_H, 0x000000, 0).setDepth(25);
+        this.tweens.add({ targets: dim, fillAlpha: 0.5, duration: 1400 });
+        this.time.delayedCall(1000, () => {
+          sfx.play('stamp');
+          stamp(this, 380, py + 80, '差押', 96, CSS.bad, { hold: Infinity, angle: -12, depth: 50 });
+        });
+        new Button(this, 360, BOTTOM - 80, {
           w: 440,
           h: 112,
-          color: 0xff5a5a,
+          color: PAL.blood,
           label: '結果を見る',
           onPress: () => {
             this.scene.stop('Shop');
             this.scene.start('GameOver');
           },
-        });
+        }).setDepth(60);
       }
     });
   }

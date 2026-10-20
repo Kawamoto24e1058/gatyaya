@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { CSS, FONT } from '../config';
+import { CSS, FONT, GAME_W, PAL } from '../config';
 import { sfx } from '../core/audio';
 
 export type TextOpts = {
@@ -11,6 +11,8 @@ export type TextOpts = {
   wrap?: number;
   originX?: number;
   originY?: number;
+  /** ベタ影（ポップな見出し用） */
+  shadow?: boolean;
 };
 
 export function txt(scene: Phaser.Scene, x: number, y: number, s: string, size: number, o: TextOpts = {}) {
@@ -23,10 +25,43 @@ export function txt(scene: Phaser.Scene, x: number, y: number, s: string, size: 
     stroke: o.stroke,
     strokeThickness: o.strokeThickness ?? (o.stroke ? 6 : 0),
     wordWrap: o.wrap ? { width: o.wrap, useAdvancedWrap: true } : undefined,
-    padding: { top: 4, bottom: 4 },
+    padding: { top: 6, bottom: 6, left: 4, right: 4 },
+    shadow: o.shadow ? { offsetX: 0, offsetY: Math.max(3, size / 10), color: CSS.ink, blur: 0, fill: true, stroke: true } : undefined,
   });
   t.setOrigin(o.originX ?? 0.5, o.originY ?? 0.5);
   return t;
+}
+
+/** ポップな見出し文字（墨のフチ＋ベタ影） */
+export function title(scene: Phaser.Scene, x: number, y: number, s: string, size: number, color: string = CSS.cream) {
+  return txt(scene, x, y, s, size, { color, stroke: CSS.ink, strokeThickness: Math.max(6, size / 6), shadow: true });
+}
+
+/** 墨の輪郭＋ずらしたベタ影の板（紙・木札など） */
+export function drawPlate(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  color: number,
+  opts: { radius?: number; shadow?: number; outline?: number; shine?: boolean } = {},
+) {
+  const r = opts.radius ?? 20;
+  const sh = opts.shadow ?? 7;
+  const ol = opts.outline ?? 5;
+  if (sh > 0) {
+    g.fillStyle(PAL.ink, 0.9);
+    g.fillRoundedRect(x, y + sh, w, h, r);
+  }
+  g.fillStyle(PAL.ink, 1);
+  g.fillRoundedRect(x - ol, y - ol, w + ol * 2, h + ol * 2, r + ol);
+  g.fillStyle(color, 1);
+  g.fillRoundedRect(x, y, w, h, r);
+  if (opts.shine !== false) {
+    g.fillStyle(0xffffff, 0.16);
+    g.fillRoundedRect(x + 8, y + 6, w - 16, Math.min(h * 0.32, 26), Math.max(4, r - 6));
+  }
 }
 
 export type ButtonOpts = {
@@ -37,14 +72,15 @@ export type ButtonOpts = {
   sub?: string;
   size?: number;
   textColor?: string;
+  icon?: string;
   onPress: () => void;
   /** 押せないときに呼ばれる（理由のトーストなど） */
   onDenied?: () => void;
 };
 
-/** pointerdown で即反応するボタン */
+/** pointerdown で即反応する木札風ボタン。押すと沈む */
 export class Button extends Phaser.GameObjects.Container {
-  private bg: Phaser.GameObjects.Graphics;
+  private face: Phaser.GameObjects.Container;
   private label: Phaser.GameObjects.Text;
   private subText?: Phaser.GameObjects.Text;
   private _enabled = true;
@@ -54,45 +90,52 @@ export class Button extends Phaser.GameObjects.Container {
     scene: Phaser.Scene,
     x: number,
     y: number,
-    private o: ButtonOpts,
+    o: ButtonOpts,
   ) {
     super(scene, x, y);
-    this.bg = scene.add.graphics();
-    this.drawBg();
-    const size = o.size ?? 34;
-    this.label = txt(scene, 0, o.sub ? -14 : 0, o.label, size, { color: o.textColor ?? CSS.white });
-    this.add([this.bg, this.label]);
-    if (o.sub) {
-      this.subText = txt(scene, 0, 24, o.sub, 22, { color: o.textColor ?? CSS.white, bold: false });
-      this.subText.setAlpha(0.85);
-      this.add(this.subText);
+    const { w, h } = o;
+    const shadow = scene.add.graphics();
+    shadow.fillStyle(PAL.ink, 1);
+    shadow.fillRoundedRect(-w / 2 - 5, -h / 2 + 3, w + 10, h + 10, 24);
+    this.face = scene.add.container(0, 0);
+    const bg = scene.add.graphics();
+    drawPlate(bg, -w / 2, -h / 2, w, h, o.color, { shadow: 0, radius: 20 });
+    // 下側を少し暗く（厚みの表現）
+    bg.fillStyle(0x000000, 0.14);
+    bg.fillRoundedRect(-w / 2, h / 2 - 12, w, 12, { tl: 0, tr: 0, bl: 20, br: 20 });
+    this.face.add(bg);
+
+    const size = o.size ?? 32;
+    const tc = o.textColor ?? CSS.cream;
+    let tx = 0;
+    if (o.icon) {
+      const ic = scene.add.image(-w / 2 + 44, 0, o.icon).setScale(Math.min(1, (h - 30) / 64));
+      this.face.add(ic);
+      tx = 30;
     }
-    this.setSize(o.w, o.h);
+    this.label = txt(scene, tx, o.sub ? -13 : 0, o.label, size, { color: tc, stroke: CSS.ink, strokeThickness: 6 });
+    this.face.add(this.label);
+    if (o.sub) {
+      this.subText = txt(scene, tx, 24, o.sub, 21, { color: tc, stroke: CSS.ink, strokeThickness: 4 });
+      this.face.add(this.subText);
+    }
+    this.add([shadow, this.face]);
+    this.setSize(w + 10, h + 10);
     this.setInteractive({ useHandCursor: true });
     this.on('pointerdown', () => {
       if (!this._enabled) {
         sfx.play('buzz', { vol: 0.5 });
-        this.scene.tweens.add({ targets: this, x: this.x + 6, duration: 40, yoyo: true, repeat: 2 });
+        this.scene.tweens.add({ targets: this.face, x: 6, duration: 40, yoyo: true, repeat: 2 });
         o.onDenied?.();
         return;
       }
       sfx.play('tap');
-      this.scene.tweens.add({ targets: this, scale: 0.93, duration: 50, yoyo: true, ease: 'Quad.easeOut' });
+      this.scene.tweens.killTweensOf(this.face);
+      this.face.y = 7;
+      this.scene.tweens.add({ targets: this.face, y: 0, duration: 140, delay: 40, ease: 'Back.easeOut' });
       o.onPress();
     });
     scene.add.existing(this);
-  }
-
-  private drawBg() {
-    const { w, h, color } = this.o;
-    const g = this.bg;
-    g.clear();
-    g.fillStyle(0x000000, 0.35);
-    g.fillRoundedRect(-w / 2, -h / 2 + 6, w, h, 22);
-    g.fillStyle(color, 1);
-    g.fillRoundedRect(-w / 2, -h / 2, w, h, 22);
-    g.fillStyle(0xffffff, 0.18);
-    g.fillRoundedRect(-w / 2 + 6, -h / 2 + 5, w - 12, h * 0.38, 16);
   }
 
   setLabel(label: string, sub?: string) {
@@ -103,7 +146,7 @@ export class Button extends Phaser.GameObjects.Container {
 
   setEnabled(e: boolean) {
     this._enabled = e;
-    this.setAlpha(e ? 1 : 0.45);
+    this.face.setAlpha(e ? 1 : 0.5);
     return this;
   }
 
@@ -115,7 +158,7 @@ export class Button extends Phaser.GameObjects.Container {
     if (on && !this.pulseTween) {
       this.pulseTween = this.scene.tweens.add({
         targets: this,
-        scale: 1.07,
+        scale: 1.06,
         duration: 420,
         yoyo: true,
         repeat: -1,
@@ -129,28 +172,49 @@ export class Button extends Phaser.GameObjects.Container {
   }
 }
 
-export function panel(scene: Phaser.Scene, x: number, y: number, w: number, h: number, color = 0xfff6e6, radius = 24) {
+/** 紙のパネル（中心座標指定） */
+export function panel(scene: Phaser.Scene, x: number, y: number, w: number, h: number, color: number = PAL.paper, radius = 24) {
   const g = scene.add.graphics();
-  g.fillStyle(0x000000, 0.3);
-  g.fillRoundedRect(x - w / 2, y - h / 2 + 8, w, h, radius);
-  g.fillStyle(color, 1);
-  g.fillRoundedRect(x - w / 2, y - h / 2, w, h, radius);
+  drawPlate(g, x - w / 2, y - h / 2, w, h, color, { radius, shine: false });
   return g;
 }
 
-/** 画面中央付近に短いメッセージ */
-export function toast(scene: Phaser.Scene, msg: string, y = 640, color = '#ffffff') {
-  const t = txt(scene, 360, y, msg, 30, { color, stroke: '#1b1430', strokeThickness: 8, wrap: 640 });
-  t.setDepth(1000).setAlpha(0).setScale(0.8);
-  scene.tweens.add({ targets: t, alpha: 1, scale: 1, duration: 120, ease: 'Back.easeOut' });
-  scene.tweens.add({ targets: t, alpha: 0, y: y - 40, delay: 1300, duration: 300, onComplete: () => t.destroy() });
-  return t;
+/** 吹き出しのトースト */
+export function toast(scene: Phaser.Scene, msg: string, y = 640, _color?: string) {
+  const c = scene.add.container(GAME_W / 2, y).setDepth(1000);
+  const t = txt(scene, 0, 0, msg, 28, { color: CSS.ink, wrap: 560 });
+  const w = Math.min(620, t.width + 48);
+  const h = t.height + 28;
+  const g = scene.add.graphics();
+  drawPlate(g, -w / 2, -h / 2, w, h, PAL.paper, { radius: 22, shadow: 6, shine: false });
+  g.fillStyle(PAL.ink, 1);
+  g.fillTriangle(-14, h / 2 + 4, 14, h / 2 + 4, 0, h / 2 + 22);
+  g.fillStyle(PAL.paper, 1);
+  g.fillTriangle(-8, h / 2 - 1, 8, h / 2 - 1, 0, h / 2 + 12);
+  c.add([g, t]);
+  c.setAlpha(0).setScale(0.7);
+  scene.tweens.add({ targets: c, alpha: 1, scale: 1, duration: 160, ease: 'Back.easeOut' });
+  scene.tweens.add({ targets: c, alpha: 0, y: y - 30, delay: 1500, duration: 260, onComplete: () => c.destroy() });
+  return c;
 }
 
 /** 数値の浮き上がり表示（+120 など） */
 export function floatText(scene: Phaser.Scene, x: number, y: number, s: string, color: string, size = 30) {
-  const t = txt(scene, x, y, s, size, { color, stroke: '#1b1430', strokeThickness: 6 }).setDepth(900);
-  scene.tweens.add({ targets: t, y: y - 60, alpha: 0, duration: 900, ease: 'Cubic.easeOut', onComplete: () => t.destroy() });
+  const t = txt(scene, x, y, s, size, { color, stroke: CSS.ink, strokeThickness: 7 }).setDepth(900);
+  t.setScale(0.6);
+  scene.tweens.add({ targets: t, scale: 1, duration: 120, ease: 'Back.easeOut' });
+  scene.tweens.add({ targets: t, y: y - 64, alpha: 0, duration: 900, delay: 150, ease: 'Cubic.easeOut', onComplete: () => t.destroy() });
+}
+
+/** ハンコ風にドンと押される文字（UR!!・済・合体！など） */
+export function stamp(scene: Phaser.Scene, x: number, y: number, s: string, size: number, color: string, opts: { hold?: number; angle?: number; depth?: number } = {}) {
+  const t = txt(scene, x, y, s, size, { color, stroke: CSS.ink, strokeThickness: Math.max(6, size / 7), shadow: true });
+  t.setDepth(opts.depth ?? 950).setAngle(opts.angle ?? -8).setScale(2.4).setAlpha(0);
+  scene.tweens.add({ targets: t, scale: 1, alpha: 1, duration: 150, ease: 'Back.easeOut' });
+  if (opts.hold !== Infinity) {
+    scene.tweens.add({ targets: t, alpha: 0, scale: 1.15, delay: 150 + (opts.hold ?? 600), duration: 220, onComplete: () => t.destroy() });
+  }
+  return t;
 }
 
 /** 数値をカウントアップ表示する */

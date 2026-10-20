@@ -1,17 +1,26 @@
 // ゲーム状態と保存。Phase 1〜3 は localStorage（必ず try/catch）。
 import { BALANCE } from '../config';
-import type { Rarity } from '../data/rarity';
-import { advanceMarketDay, initMarket, type MarketState } from './market';
+import { nextRarity, RARITY_INFO, type Rarity } from '../data/rarity';
+import { advanceEvents, dayEvent, initEvents, type EventState } from './events';
+import { advanceMarketDay, initMarket, migrateMarket, type MarketState } from './market';
 import { runHook } from './relics';
+import { upApBonus, upFreeStall, upJarBonus } from './upgrades';
 
 export type DayStats = {
   pulls: number;
   gachaSpent: number;
   sales: number;
   wages: number;
-  merges: number;
+  /** 夜のうちに化けたカプセル数（その日の朝） */
+  transforms: number;
+  /** 瓶をまぜた回数 */
+  shuffles: number;
+  /** 色違いを作った回数 */
+  fusions: number;
   opened: number;
   coinsAtStart: number;
+  /** 今日のバイト回数（2 回目からは疲れて給料が減る） */
+  baitos: number;
 };
 
 export type GameState = {
@@ -23,16 +32,41 @@ export type GameState = {
   apMax: number;
   quota: number;
   machineId: string;
+  /** 店に設置済みのガチャ機（切り替えて使える） */
+  machines: string[];
   /** 瓶の中のカプセル（位置は保存しない。再開時は上から降らせる） */
   jar: Rarity[];
+  /** jar と同じ並び。true は色違いカプセル */
+  jarShiny: boolean[];
   jarCapacityBase: number;
   /** バイト報酬など、その週だけ有効な瓶容量ボーナス */
   jarBonusWeek: number;
+  /** バイト（梱包）の特典：その週の売値 +n（割合） */
+  sellBonusWeek: number;
+  /** バイト（お化け払い）の特典：今夜は化ける確率 ×2 */
+  nightBoost: boolean;
+  /** バイト（提灯の火入れ）の特典：明日の AP +n */
+  apBonusTomorrow: number;
+  /** 前回のバイト（続けて同じ仕事が出ないように） */
+  lastBaito: string;
+  /** 掲示板に貼られている求人（「やめる」で引き直せないよう、遊ぶまで固定） */
+  baitoBoard: string[];
   inventory: Record<string, number>;
   market: MarketState;
+  events: EventState;
   relics: string[];
+  /** 縁起物ガチャを最後に回した日（1 日 1 回） */
+  relicGachaDay: number;
+  /** 今週、縁起物ガチャを回した回数（回すたびに値段が倍） */
+  relicGachaWeek: number;
+  /** 店の改装のレベル（id → レベル） */
+  upgrades: Record<string, number>;
+  /** 自動ハンドルを動かすか（店の札で切り替え） */
+  autoCrankOn: boolean;
   today: DayStats;
-  totals: { pulls: number; sales: number; merges: number; bestRarity: Rarity | null };
+  totals: { pulls: number; sales: number; transforms: number; bestRarity: Rarity | null; bestSale?: number };
+  /** 昨夜化けたカプセル（瓶の並び順のインデックス）。朝の演出に使う */
+  nightChanges: number[];
   /** 朝のバナーをまだ出していない */
   pendingMorning: boolean;
 };
@@ -41,7 +75,7 @@ const SAVE_KEY = 'gatyaya.save.v1';
 const MUTE_KEY = 'gatyaya.mute';
 
 function freshDay(coins: number): DayStats {
-  return { pulls: 0, gachaSpent: 0, sales: 0, wages: 0, merges: 0, opened: 0, coinsAtStart: coins };
+  return { pulls: 0, gachaSpent: 0, sales: 0, wages: 0, transforms: 0, shuffles: 0, fusions: 0, opened: 0, coinsAtStart: coins, baitos: 0 };
 }
 
 export function newGame(): GameState {
@@ -54,14 +88,27 @@ export function newGame(): GameState {
     apMax: BALANCE.apPerDay,
     quota: BALANCE.firstQuota,
     machineId: 'hand',
+    machines: ['hand'],
     jar: [],
+    jarShiny: [],
     jarCapacityBase: BALANCE.jarCapacity,
     jarBonusWeek: 0,
+    sellBonusWeek: 0,
+    nightBoost: false,
+    apBonusTomorrow: 0,
+    lastBaito: '',
+    baitoBoard: [],
     inventory: {},
     market: initMarket(),
+    events: initEvents(),
     relics: [],
+    relicGachaDay: 0,
+    relicGachaWeek: 0,
+    upgrades: {},
+    autoCrankOn: true,
     today: freshDay(BALANCE.startCoins),
-    totals: { pulls: 0, sales: 0, merges: 0, bestRarity: null },
+    totals: { pulls: 0, sales: 0, transforms: 0, bestRarity: null },
+    nightChanges: [],
     pendingMorning: true,
   };
 }
@@ -80,7 +127,16 @@ export function setState(s: GameState): void {
 }
 
 export function jarCapacity(s: GameState): number {
-  return s.jarCapacityBase + s.jarBonusWeek;
+  return runHook(s, 'onJarCapacity', s.jarCapacityBase + s.jarBonusWeek + upJarBonus(s));
+}
+
+/** 縁起物を反映した値 */
+export const pullCost = (s: GameState, base: number) => Math.max(1, Math.round(runHook(s, 'onPullCost', base) * (dayEvent(s)?.gacha ?? 1)));
+export const sellApCost = (s: GameState) => (upFreeStall(s) ? 0 : runHook(s, 'onSellApCost', BALANCE.apCost.sell));
+
+/** 今週の返済額（縁起物で減ることがある） */
+export function dueAmount(s: GameState): number {
+  return runHook(s, 'onPayday', s.quota);
 }
 
 export function inventoryCount(s: GameState): number {
@@ -98,25 +154,66 @@ export function isPayday(s: GameState): boolean {
 
 /** 閉店後に翌日へ進める（返済処理は PaydayScene 側で先に済ませる） */
 export function advanceDay(s: GameState): void {
+  // 夜のうちに化ける（昨日のうちに付いた「化けやすい」はここで使う）
+  nightTransform(s);
   s.day += 1;
-  s.apMax = runHook(s, 'onDayStart', BALANCE.apPerDay);
+  s.apMax = runHook(s, 'onDayStart', BALANCE.apPerDay) + upApBonus(s);
+  s.apMax += s.apBonusTomorrow;
   s.ap = s.apMax;
-  advanceMarketDay(s.market);
+  s.apBonusTomorrow = 0;
+  advanceMarketDay(s.market, s.day);
+  advanceEvents(s);
+  // 今日の出来事で AP が増える
+  const extraAp = dayEvent(s)?.ap ?? 0;
+  s.apMax += extraAp;
+  s.ap += extraAp;
   s.today = freshDay(s.coins);
+  s.today.transforms = s.nightChanges.length;
   s.pendingMorning = true;
-  // TODO(Phase 2): 噂（掲示板）・イベントの抽選
+}
+
+// TODO(balance): 夜に化ける確率（上位ほど起きにくい）
+const NIGHT_CHANCE: Record<Rarity, number> = { N: 0.06, R: 0.05, SR: 0.03, SSR: 0.015, UR: 0 };
+
+/** 開けずに瓶へ残したカプセルが、夜のうちに付喪神になって 1 段階上がる */
+function nightTransform(s: GameState): void {
+  s.nightChanges = [];
+  s.jar.forEach((r, i) => {
+    const next = nextRarity(r);
+    const chance = runHook(s, 'onNight', NIGHT_CHANCE[r], { rarity: r }) * (s.nightBoost ? 2 : 1);
+    if (!next || Math.random() >= chance) return;
+    s.jar[i] = next;
+    s.nightChanges.push(i);
+    s.today.transforms += 1;
+    s.totals.transforms += 1;
+    if (!s.totals.bestRarity || RARITY_INFO[next].index > RARITY_INFO[s.totals.bestRarity].index) s.totals.bestRarity = next;
+  });
+  s.nightBoost = false;
 }
 
 /** 返済。成功なら true */
 export function payDebt(s: GameState): boolean {
-  const quota = runHook(s, 'onPayday', s.quota);
-  if (s.coins < quota) return false;
-  s.coins -= quota;
+  const due = dueAmount(s);
+  if (s.coins < due) return false;
+  s.coins -= due;
+  // 繰り延べた分（借金の天才）は翌週のノルマに乗る
+  const carry = Math.max(0, s.quota - due);
   s.week += 1;
-  s.quota = Math.round(s.quota * BALANCE.quotaGrowth);
+  s.quota = Math.round(s.quota * BALANCE.quotaGrowth) + carry;
   s.jarBonusWeek = 0;
-  // TODO(Phase 2): 返済後にレリックショップ（3 つから 1 つ）
+  s.sellBonusWeek = 0;
+  s.relicGachaWeek = 0;
   return true;
+}
+
+export function addRelic(s: GameState, id: string): void {
+  if (!s.relics.includes(id)) s.relics.push(id);
+  // AP が増える縁起物はその日から効かせる
+  const apMax = runHook(s, 'onDayStart', BALANCE.apPerDay);
+  if (apMax !== s.apMax) {
+    s.ap = Math.max(0, s.ap + (apMax - s.apMax));
+    s.apMax = apMax;
+  }
 }
 
 // ---- 保存 ----
@@ -155,6 +252,26 @@ export function loadSave(): GameState | null {
     if (!raw) return null;
     const s = JSON.parse(raw) as GameState;
     if (s.version !== 1) return null;
+    migrateMarket(s.market, s.day);
+    // 合体廃止前のセーブを補う
+    s.nightChanges ??= [];
+    s.sellBonusWeek ??= 0;
+    s.nightBoost ??= false;
+    s.apBonusTomorrow ??= 0;
+    s.lastBaito ??= '';
+    s.baitoBoard ??= [];
+    s.relicGachaDay ??= 0;
+    s.relicGachaWeek ??= 0;
+    s.upgrades ??= {};
+    s.autoCrankOn ??= true;
+    s.machines ??= ['hand'];
+    s.events ??= initEvents();
+    s.jarShiny ??= s.jar.map(() => false);
+    s.today.shuffles ??= 0;
+    s.today.fusions ??= 0;
+    s.today.baitos ??= 0;
+    s.today.transforms ??= 0;
+    s.totals.transforms ??= 0;
     return s;
   } catch {
     return null;

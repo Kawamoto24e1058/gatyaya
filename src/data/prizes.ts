@@ -1,11 +1,34 @@
 // 景品はすべて架空のシリーズ。実在の商品名・ブランド・キャラクターは使わない。
 import { RARITY_INFO, type Rarity } from './rarity';
 
+/** グッズの種類。同じ絵柄でも形が違う */
+export type PrizeKind = 'badge' | 'sticker' | 'keychain' | 'acrylic' | 'plush' | 'figure' | 'holo';
+
+export const KIND_LABEL: Record<PrizeKind, string> = {
+  badge: '缶バッジ',
+  sticker: 'シール',
+  keychain: 'キーホルダー',
+  acrylic: 'アクスタ',
+  plush: 'ぬいぐるみ',
+  figure: 'フィギュア',
+  holo: 'ホロカード',
+};
+
+// レア度が上がるほど“いいモノ”になる
+const KINDS_BY_RARITY: Record<Rarity, PrizeKind[]> = {
+  N: ['badge', 'sticker', 'keychain'],
+  R: ['keychain', 'acrylic', 'plush'],
+  SR: ['acrylic', 'plush', 'figure'],
+  SSR: ['figure', 'holo'],
+  UR: ['figure', 'holo'],
+};
+
 export type Prize = {
   id: string;
   name: string;
   seriesId: string;
   rarity: Rarity;
+  kind: PrizeKind;
   basePrice: number;
 };
 
@@ -16,9 +39,9 @@ export type Series = {
 };
 
 export const SERIES: Series[] = [
-  { id: 'mochi', name: 'もちもち惑星', color: '#ff8fb1' },
-  { id: 'neji', name: 'ネジネジ工房', color: '#5ec8ff' },
-  { id: 'obake', name: 'おばけ商店街', color: '#a98cff' },
+  { id: 'mochi', name: 'もちもち惑星', color: '#e8879c' },
+  { id: 'neji', name: 'ネジネジ工房', color: '#5f9fae' },
+  { id: 'obake', name: 'おばけ商店街', color: '#8f78c0' },
 ];
 
 // シリーズ × レア度ごとに 2 種
@@ -49,13 +72,14 @@ const NAMES: Record<string, Record<Rarity, [string, string]>> = {
 // シリーズごとの価格の癖（TODO(balance)）
 const SERIES_PRICE_BIAS: Record<string, number> = { mochi: 1.0, neji: 1.1, obake: 0.9 };
 
-export const PRIZES: Prize[] = SERIES.flatMap((s) =>
+export const PRIZES: Prize[] = SERIES.flatMap((s, si) =>
   (Object.keys(NAMES[s.id]) as Rarity[]).flatMap((r) =>
     NAMES[s.id][r].map((name, k) => ({
       id: `${s.id}_${r}_${k}`,
       name,
       seriesId: s.id,
       rarity: r,
+      kind: KINDS_BY_RARITY[r][(si + k) % KINDS_BY_RARITY[r].length],
       basePrice: Math.round(RARITY_INFO[r].basePrice * SERIES_PRICE_BIAS[s.id] * (k === 0 ? 0.9 : 1.1)),
     })),
   ),
@@ -66,4 +90,20 @@ export const SERIES_BY_ID: Record<string, Series> = Object.fromEntries(SERIES.ma
 
 export function prizesOf(seriesId: string, rarity: Rarity): Prize[] {
   return PRIZES.filter((p) => p.seriesId === seriesId && p.rarity === rarity);
+}
+
+// ---- 色違い（瓶の中で同じレア度のカプセルを 3 つ以上つないで作る） ----
+
+/** 色違いの売値倍率（TODO(balance)：3 つ分＋α） */
+export const SHINY_MULT = 3.6;
+const SHINY_SUFFIX = '*';
+
+/** 所持品のキー。色違いは末尾に * を付けて別枠で持つ */
+export function stockKey(prizeId: string, shiny: boolean): string {
+  return shiny ? prizeId + SHINY_SUFFIX : prizeId;
+}
+
+export function parseStock(key: string): { prize: Prize; shiny: boolean } {
+  const shiny = key.endsWith(SHINY_SUFFIX);
+  return { prize: PRIZE_BY_ID[shiny ? key.slice(0, -1) : key], shiny };
 }

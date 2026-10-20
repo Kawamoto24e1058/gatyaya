@@ -1,19 +1,56 @@
 // 相場で売る（出店）。入場で 1AP 消費済み。出店中は何個でも売れ、店に戻ると店じまい。
 // TODO(仕様確認): 「出店」を 1 日 1 回とみなすか、入るたびに 1AP かは未確定。現状は入るたびに 1AP。
+// 見た目：トレカ屋のショーケース＋黒板の相場ボード。数値は景品をタップしたときだけ出す。
 import Phaser from 'phaser';
-import { CSS, GAME_W } from '../config';
+import { BOTTOM, CSS, GAME_H, GAME_W, PAL } from '../config';
 import { sfx } from '../core/audio';
 import { fmt } from '../core/util';
-import { PRIZE_BY_ID, SERIES, SERIES_BY_ID } from '../data/prizes';
+import { parseStock, SERIES, SHINY_MULT } from '../data/prizes';
 import { RARITY_INFO } from '../data/rarity';
-import { estimateSellTotal, saturationOf, sellOne, sellPrice, trendIcon, trendSign } from '../game/market';
+import { activeOn, DARK_CATCH_RATE, EVENT_DEFS, eventMult, isBanned } from '../game/events';
+import { darkPrice, estimateSellTotal, matchesOrder, saturationOf, sellDark, sellOneEx, sellPrice, trendSign, type SeriesMarket } from '../game/market';
+import { jackpotFx } from '../ui/Jackpot';
+import { upPriceGun } from '../game/upgrades';
+import { runHook } from '../game/relics';
 import { S, save } from '../game/state';
 import { Hud } from '../ui/Hud';
-import { Button, panel, txt } from '../ui/widgets';
+import { ITEM_Y, makePrizeView, twinkle, VIEW_H, VIEW_W } from '../ui/PrizeView';
+import { Button, drawPlate, floatText, stamp, txt } from '../ui/widgets';
 
-const LIST = { top: 420, bottom: 1110, colW: 216, rowH: 118, x0: 24 };
+const COLS = 3;
+const VIEW_SCALE = 0.62;
+const GAP = 14;
 
-const MODE_LABEL = { normal: '', boom: 'ブーム', bored: '飽き気味' } as const;
+/** 黒板に描くチョーク風の矢印・炎 */
+function drawTrendMark(g: Phaser.GameObjects.Graphics, x: number, y: number, sm: SeriesMarket) {
+  const sign = trendSign(sm);
+  const col = sign === 'up' ? 0x9be0a4 : sign === 'down' ? 0xf2a0b4 : 0xd8d4cc;
+  g.lineStyle(8, col, 1);
+  g.beginPath();
+  if (sign === 'flat') {
+    g.moveTo(x - 22, y);
+    g.lineTo(x + 18, y);
+    g.strokePath();
+    g.fillStyle(col, 1);
+    g.fillTriangle(x + 14, y - 12, x + 30, y, x + 14, y + 12);
+  } else {
+    const d = sign === 'up' ? -1 : 1;
+    g.moveTo(x - 20, y - d * 16);
+    g.lineTo(x + 14, y + d * 12);
+    g.strokePath();
+    g.fillStyle(col, 1);
+    g.fillTriangle(x + 4, y + d * 22, x + 26, y + d * 22, x + 22, y + d * -2);
+  }
+  if (sm.mode === 'boom') {
+    // 炎
+    const fx = x - 50;
+    g.fillStyle(0xf08a4b, 1);
+    g.fillTriangle(fx - 14, y + 16, fx + 14, y + 16, fx, y - 22);
+    g.fillCircle(fx, y + 8, 14);
+    g.fillStyle(0xf6d58a, 1);
+    g.fillCircle(fx, y + 10, 7);
+  }
+}
 
 export class MarketScene extends Phaser.Scene {
   private hud!: Hud;
@@ -23,6 +60,8 @@ export class MarketScene extends Phaser.Scene {
   private drag: { id: number; startY: number; startScroll: number; moved: boolean } | null = null;
   private detail: Phaser.GameObjects.Container | null = null;
   private detailId: string | null = null;
+  private area = { top: 0, bottom: 0, x0: 0, cellW: 0, cellH: 0 };
+  private orderText?: Phaser.GameObjects.Text;
 
   constructor() {
     super('Market');
@@ -34,33 +73,35 @@ export class MarketScene extends Phaser.Scene {
     this.drag = null;
     this.scrollY = 0;
 
-    const bg = this.add.graphics();
-    bg.fillStyle(0x2d2148, 1);
-    bg.fillRect(0, 0, GAME_W, 1280);
-    // 屋台の日よけ
-    for (let i = 0; i < 18; i++) {
-      bg.fillStyle(i % 2 ? 0xfff6e6 : 0xff5a7a, 1);
-      bg.fillRect(i * 40, 118, 40, 22);
-      bg.fillCircle(i * 40 + 20, 140, 20);
-    }
-
+    this.add.image(0, 0, 'bg_plum').setOrigin(0);
     this.hud = new Hud(this);
-    this.buildSeriesBoard();
+    const top = Hud.bottom();
 
-    txt(this, 26, 396, '在庫（タップで値段を見る）', 22, { originX: 0, color: CSS.sub, bold: false });
-    this.list = this.add.container(0, LIST.top);
-    const maskG = this.make.graphics({}, false);
-    maskG.fillStyle(0xffffff);
-    maskG.fillRect(0, LIST.top, GAME_W, LIST.bottom - LIST.top);
-    this.list.setMask(maskG.createGeometryMask());
-    this.renderList();
+    // のれん風の日よけ
+    const awn = this.add.graphics().setDepth(10);
+    for (let i = 0; i < 9; i++) {
+      awn.fillStyle(i % 2 ? PAL.paper : PAL.vermilion, 1);
+      awn.fillRect(i * 80, top, 80, 26);
+      awn.fillCircle(i * 80 + 40, top + 26, 40 / 2);
+    }
+    awn.fillStyle(PAL.ink, 1);
+    awn.fillRect(0, top, GAME_W, 5);
 
-    new Button(this, 360, 1196, {
-      w: 420,
-      h: 108,
-      color: 0xff5a7a,
+    const boardBottom = this.buildBoard(top + 60);
+    const orderBottom = this.buildOrder(boardBottom + 14);
+
+    const btnY = BOTTOM - 70;
+    const caseTop = orderBottom + 22;
+    const caseBottom = btnY - 80;
+    this.buildCase(caseTop, caseBottom);
+
+    new Button(this, 360, btnY, {
+      w: 440,
+      h: 104,
+      color: PAL.vermilion,
+      icon: 'ic_close',
       label: '店じまいして戻る',
-      size: 32,
+      size: 30,
       onPress: () => this.leave(),
     });
 
@@ -69,23 +110,117 @@ export class MarketScene extends Phaser.Scene {
     this.input.on('pointerup', this.onUp, this);
   }
 
-  private buildSeriesBoard() {
+  /** お客の注文の貼り紙。戻り値は下端（注文がなければ詰める） */
+  private buildOrder(y: number): number {
+    const o = S().market.order;
+    if (!o) return y;
+    const se = SERIES.find((x) => x.id === o.seriesId)!;
+    const g = this.add.graphics();
+    drawPlate(g, 30, y, 660, 60, PAL.paper, { radius: 10, shadow: 5, outline: 4, shine: false });
+    g.fillStyle(PAL.vermilion, 1);
+    g.fillRoundedRect(38, y + 8, 96, 44, 8);
+    txt(this, 86, y + 30, '注文', 24, { color: CSS.cream });
+    this.orderText = txt(this, 150, y + 30, '', 22, { originX: 0, color: CSS.ink });
+    this.orderText.setData('label', `${se.name} の ${o.minRarity} 以上を ×${o.mult} で`);
+    this.refreshOrder();
+    return y + 60;
+  }
+
+  private refreshOrder() {
+    const o = S().market.order;
+    if (!o || !this.orderText) return;
+    this.orderText.setText(o.left > 0 ? `${this.orderText.getData('label')}（あと ${o.left} 個）` : '本日の注文は締め切りました');
+    this.orderText.setColor(o.left > 0 ? CSS.ink : CSS.inkSoft);
+  }
+
+  /** 黒板の相場ボード。戻り値は下端 */
+  private buildBoard(y: number): number {
     const s = S();
-    panel(this, 360, 272, 680, 220, 0x1b1430, 20);
+    const h = 52 + SERIES.length * 66;
+    const g = this.add.graphics();
+    drawPlate(g, 30, y, 660, h, PAL.wood, { radius: 14, shadow: 7, outline: 5, shine: false });
+    g.fillStyle(0x2f4a3a, 1);
+    g.fillRoundedRect(44, y + 14, 632, h - 28, 8);
+    // チョークの擦れ
+    g.fillStyle(0xffffff, 0.05);
+    for (let i = 0; i < 6; i++) g.fillEllipse(120 + i * 100, y + 30 + (i % 3) * 40, 140, 26);
+    txt(this, 64, y + 40, '今日の相場', 26, { originX: 0, color: '#e8e4d6' });
+    txt(this, 656, y + 40, 'タップで値段', 18, { originX: 1, color: '#b9c8b8', bold: false });
+    const marks = this.add.graphics();
     SERIES.forEach((se, i) => {
-      const y = 196 + i * 68;
+      const ry = y + 92 + i * 66;
       const sm = s.market.series[se.id];
       const col = Phaser.Display.Color.HexStringToColor(se.color).color;
-      const g = this.add.graphics();
-      g.fillStyle(col, 1);
-      g.fillRoundedRect(46, y - 20, 16, 40, 6);
-      txt(this, 80, y, se.name, 30, { originX: 0 });
-      const sign = trendSign(sm);
-      const color = sm.mode === 'boom' ? CSS.gold : sign === 'up' ? CSS.good : sign === 'down' ? CSS.bad : CSS.sub;
-      const icon = txt(this, 630, y, trendIcon(sm), 44, { originX: 1, color });
-      if (MODE_LABEL[sm.mode]) txt(this, 530, y, MODE_LABEL[sm.mode], 22, { originX: 1, color, bold: false });
-      if (sm.mode === 'boom') this.tweens.add({ targets: icon, scale: 1.15, duration: 380, yoyo: true, repeat: -1 });
+      g.fillStyle(col, 0.9);
+      g.fillRoundedRect(66, ry - 18, 14, 36, 4);
+      txt(this, 96, ry, se.name, 26, { originX: 0, color: '#f2efe4' });
+      this.drawWeekBars(marks, 330, ry, sm);
+      // かかっているイベント（📺 🏭 ⚠ 🚫）
+      const evs = activeOn(s, se.id);
+      if (evs.length > 0) {
+        const icons = txt(this, 322, ry, evs.map((e) => EVENT_DEFS[e.type].icon).join(''), 24, { originX: 1 });
+        this.tweens.add({ targets: icons, scale: 1.15, duration: 420, yoyo: true, repeat: -1 });
+      }
+      drawTrendMark(marks, 626, ry, sm);
     });
+    return y + h;
+  }
+
+  /** 今週の値動き（チョークの棒グラフ）。未来の日は「?」 */
+  private drawWeekBars(g: Phaser.GameObjects.Graphics, x0: number, y: number, sm: SeriesMarket) {
+    const bw = 20;
+    const gap = 6;
+    const base = y + 26;
+    // 基準線（×1.0 の高さ）
+    const h1 = 28;
+    g.lineStyle(2, 0xe8e4d6, 0.4);
+    g.lineBetween(x0 - 4, base - h1, x0 + 7 * (bw + gap), base - h1);
+    for (let i = 0; i < 7; i++) {
+      const x = x0 + i * (bw + gap);
+      if (i > sm.dayIdx) {
+        g.fillStyle(0xe8e4d6, 0.3);
+        g.fillCircle(x + bw / 2, base - 6, 3);
+        continue;
+      }
+      const v = sm.curve[i];
+      // ×6 まで枠内に収まるよう高い側を圧縮
+      const h = Phaser.Math.Clamp(h1 * Math.pow(v, 0.6), 6, 52);
+      const col = v >= 1.8 ? 0xf6c48a : v >= 1 ? 0x9be0a4 : 0xf2a0b4;
+      g.fillStyle(col, i === sm.dayIdx ? 1 : 0.6);
+      g.fillRect(x, base - h, bw, h);
+      if (i === sm.dayIdx) {
+        g.lineStyle(3, 0xffffff, 0.9);
+        g.strokeRect(x - 2, base - h - 2, bw + 4, h + 4);
+      }
+    }
+  }
+
+  /** ガラスのショーケース */
+  private buildCase(top: number, bottom: number) {
+    const g = this.add.graphics();
+    drawPlate(g, 22, top, 676, bottom - top, PAL.woodDark, { radius: 18, shadow: 8, outline: 5, shine: false });
+    g.fillStyle(0x1a1020, 1);
+    g.fillRoundedRect(36, top + 14, 648, bottom - top - 28, 10);
+    // 棚板
+    const cellW = VIEW_W * VIEW_SCALE;
+    const cellH = VIEW_H * VIEW_SCALE + 30;
+    const x0 = (GAME_W - (COLS * cellW + (COLS - 1) * GAP)) / 2;
+    this.area = { top: top + 20, bottom: bottom - 20, x0, cellW, cellH };
+    txt(this, 360, top - 2, '在庫', 24, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 5 }).setDepth(5);
+
+    this.list = this.add.container(0, this.area.top);
+    const maskG = this.make.graphics({}, false);
+    maskG.fillStyle(0xffffff);
+    maskG.fillRect(36, this.area.top, 648, this.area.bottom - this.area.top);
+    this.list.setMask(maskG.createGeometryMask());
+
+    // ガラスの反射（手前）
+    const glass = this.add.graphics().setDepth(20);
+    glass.fillStyle(0xffffff, 0.06);
+    glass.fillTriangle(36, top + 14, 260, top + 14, 36, top + 260);
+    glass.fillStyle(0xffffff, 0.05);
+    glass.fillRect(560, top + 14, 18, bottom - top - 28);
+    this.renderList();
   }
 
   private sortedIds(): string[] {
@@ -93,8 +228,8 @@ export class MarketScene extends Phaser.Scene {
     return Object.keys(inv)
       .filter((id) => inv[id] > 0)
       .sort((a, b) => {
-        const pa = PRIZE_BY_ID[a];
-        const pb = PRIZE_BY_ID[b];
+        const pa = parseStock(a).prize;
+        const pb = parseStock(b).prize;
         return RARITY_INFO[pb.rarity].index - RARITY_INFO[pa.rarity].index || pa.seriesId.localeCompare(pb.seriesId) || a.localeCompare(b);
       });
   }
@@ -103,55 +238,73 @@ export class MarketScene extends Phaser.Scene {
     this.list.removeAll(true);
     this.ids = this.sortedIds();
     const s = S();
+    const A = this.area;
     if (this.ids.length === 0) {
-      this.list.add(txt(this, 360, 200, '売れる景品がありません', 28, { color: CSS.sub }));
+      this.list.add(txt(this, 360, 120, 'ショーケースは空っぽ…', 28, { color: CSS.sub }));
     }
     this.ids.forEach((id, i) => {
-      const p = PRIZE_BY_ID[id];
-      const se = SERIES_BY_ID[p.seriesId];
-      const info = RARITY_INFO[p.rarity];
-      const x = LIST.x0 + (i % 3) * (LIST.colW + 12);
-      const y = Math.floor(i / 3) * LIST.rowH;
-      const g = this.add.graphics();
-      g.fillStyle(0xfff6e6, 1);
-      g.fillRoundedRect(x, y, LIST.colW, LIST.rowH - 12, 16);
-      g.fillStyle(Phaser.Display.Color.HexStringToColor(se.color).color, 1);
-      g.fillRoundedRect(x, y, 14, LIST.rowH - 12, { tl: 16, bl: 16, tr: 0, br: 0 });
-      g.lineStyle(4, info.color, 1);
-      g.strokeRoundedRect(x, y, LIST.colW, LIST.rowH - 12, 16);
-      const rb = txt(this, x + 26, y + 22, p.rarity, 22, { originX: 0, color: info.css, stroke: '#2a1f45', strokeThickness: 4 });
+      const { prize: p, shiny } = parseStock(id);
+      const col = i % COLS;
+      const row = Math.floor(i / COLS);
+      const cx = A.x0 + col * (A.cellW + GAP) + A.cellW / 2;
+      const cy = row * A.cellH + (-ITEM_Y + 110) * VIEW_SCALE + 8;
+      // 棚板
+      if (col === 0) {
+        const shelf = this.add.graphics();
+        shelf.fillStyle(PAL.wood, 1);
+        shelf.fillRect(36, cy + (ITEM_Y + 104) * VIEW_SCALE, 648, 10);
+        shelf.fillStyle(PAL.ink, 1);
+        shelf.fillRect(36, cy + (ITEM_Y + 104) * VIEW_SCALE + 10, 648, 3);
+        this.list.add(shelf);
+      }
+      const card = makePrizeView(this, p, { count: s.inventory[id], shiny });
+      card.setPosition(cx, cy).setScale(VIEW_SCALE);
+      this.list.add(card);
+      // 値動きの小札（シリーズ単位の矢印）
       const sm = s.market.series[p.seriesId];
-      const arrow = txt(this, x + LIST.colW - 12, y + 22, trendIcon(sm), 22, {
-        originX: 1,
-        color: sm.mode === 'boom' ? '#e08a00' : trendSign(sm) === 'up' ? '#1f9e5a' : trendSign(sm) === 'down' ? '#d63a3a' : '#8a80a6',
-      });
-      const name = txt(this, x + 26, y + 62, p.name, p.name.length > 7 ? 19 : 23, {
-        originX: 0,
-        color: CSS.ink,
-        align: 'left',
-        wrap: LIST.colW - 70,
-      });
-      const cnt = txt(this, x + LIST.colW - 12, y + 80, `×${s.inventory[id]}`, 26, { originX: 1, color: CSS.ink });
-      this.list.add([g, rb, arrow, name, cnt]);
+      const sign = trendSign(sm);
+      const banned = isBanned(s, p.seriesId);
+      const mark = banned ? '🚫' : sm.mode === 'boom' ? '🔥' : sign === 'up' ? '↑' : sign === 'down' ? '↓' : '→';
+      const tagColor = banned ? PAL.ink : sm.mode === 'boom' ? PAL.mustard : sign === 'up' ? PAL.moss : sign === 'down' ? PAL.vermilion : 0x8a7f9a;
+      const tg = this.add.graphics();
+      const ty = cy + (ITEM_Y - 110) * VIEW_SCALE;
+      drawPlate(tg, cx - A.cellW / 2 - 4, ty, 46, 38, tagColor, { radius: 8, shadow: 3, outline: 3, shine: false });
+      this.list.add(tg);
+      this.list.add(txt(this, cx - A.cellW / 2 + 19, ty + 19, mark, 24, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 4 }));
+      // 注文に当てはまる景品には「注」の札
+      if (matchesOrder(s, id)) {
+        const og = this.add.graphics();
+        drawPlate(og, cx - A.cellW / 2 - 4, ty + 44, 46, 38, PAL.vermilion, { radius: 8, shadow: 3, outline: 3, shine: false });
+        this.list.add(og);
+        this.list.add(txt(this, cx - A.cellW / 2 + 19, ty + 63, '注', 22, { color: CSS.cream }));
+      }
+      // 機材「値札機」：今日の値段を出す
+      if (upPriceGun(s) && !banned) {
+        const pg = this.add.graphics();
+        drawPlate(pg, cx - 34, ty + 2, 76, 34, PAL.paper, { radius: 8, shadow: 3, outline: 3, shine: false });
+        this.list.add(pg);
+        this.list.add(txt(this, cx + 4, ty + 19, fmt(sellPrice(s, id)), 20, { color: CSS.bad }));
+      }
     });
     this.clampScroll();
   }
 
   private maxScroll() {
-    const rows = Math.ceil(this.ids.length / 3);
-    return Math.max(0, rows * LIST.rowH - (LIST.bottom - LIST.top));
+    const rows = Math.ceil(this.ids.length / COLS);
+    return Math.max(0, rows * this.area.cellH + 20 - (this.area.bottom - this.area.top));
   }
 
   private clampScroll() {
     this.scrollY = Phaser.Math.Clamp(this.scrollY, 0, this.maxScroll());
-    this.list.y = LIST.top - this.scrollY;
+    this.list.y = this.area.top - this.scrollY;
   }
 
   // ---- 入力（リストはスクロールと区別するため指を離したときに選択） ----
 
-  private onDown(p: Phaser.Input.Pointer) {
-    if (this.detail || this.drag) return;
-    if (p.worldY < LIST.top || p.worldY > LIST.bottom) return;
+  private onDown(p: Phaser.Input.Pointer, over: Phaser.GameObjects.GameObject[]) {
+    // ボタンなどを押したタップは一覧に通さない（「閉じる」が下の景品を開いてしまうのを防ぐ）
+    if (this.detail || this.drag || over.length > 0) return;
+    if (p.worldY < this.area.top || p.worldY > this.area.bottom) return;
     this.drag = { id: p.id, startY: p.worldY, startScroll: this.scrollY, moved: false };
   }
 
@@ -170,26 +323,25 @@ export class MarketScene extends Phaser.Scene {
     const moved = this.drag.moved;
     this.drag = null;
     if (moved) return;
-    const lx = p.worldX - LIST.x0;
-    const ly = p.worldY - LIST.top + this.scrollY;
-    const col = Math.floor(lx / (LIST.colW + 12));
-    const row = Math.floor(ly / LIST.rowH);
-    if (col < 0 || col > 2 || lx - col * (LIST.colW + 12) > LIST.colW) return;
-    const id = this.ids[row * 3 + col];
+    const A = this.area;
+    const lx = p.worldX - A.x0;
+    const ly = p.worldY - A.top + this.scrollY;
+    const col = Math.floor(lx / (A.cellW + GAP));
+    const row = Math.floor(ly / A.cellH);
+    if (col < 0 || col >= COLS || lx - col * (A.cellW + GAP) > A.cellW) return;
+    const id = this.ids[row * COLS + col];
     if (id) {
-      sfx.play('tap');
+      sfx.play('flip', { rate: 1.3, vol: 0.6 });
       this.openDetail(id);
     }
   }
 
   // ---- 詳細パネル（数値はここでだけ出す） ----
 
-  private openDetail(id: string) {
+  private openDetail(id: string, animate = true) {
     this.detail?.destroy();
     const s = S();
-    const p = PRIZE_BY_ID[id];
-    const se = SERIES_BY_ID[p.seriesId];
-    const info = RARITY_INFO[p.rarity];
+    const { prize: p, shiny } = parseStock(id);
     const sm = s.market.series[p.seriesId];
     const have = s.inventory[id] ?? 0;
     if (have <= 0) {
@@ -198,51 +350,83 @@ export class MarketScene extends Phaser.Scene {
     }
 
     const c = this.add.container(0, 0).setDepth(700);
-    const shade = this.add.rectangle(360, 640, GAME_W, 1280, 0x000000, 0.55).setInteractive();
+    const shade = this.add.rectangle(GAME_W / 2, GAME_H / 2, GAME_W, GAME_H, PAL.ink, 0.75).setInteractive();
     shade.on('pointerdown', () => this.closeDetail());
     c.add(shade);
-    const pg = panel(this, 360, 700, 620, 640);
-    c.add(pg);
-    const band = this.add.graphics();
-    band.fillStyle(Phaser.Display.Color.HexStringToColor(se.color).color, 1);
-    band.fillRoundedRect(50, 380, 620, 64, { tl: 24, tr: 24, bl: 0, br: 0 });
-    c.add(band);
-    c.add(txt(this, 80, 412, se.name, 26, { originX: 0, stroke: '#2a1f45', strokeThickness: 5 }));
-    c.add(txt(this, 640, 412, p.rarity, 30, { originX: 1, color: info.css, stroke: '#2a1f45', strokeThickness: 6 }));
-    c.add(txt(this, 360, 490, p.name, 38, { color: CSS.ink, wrap: 560 }));
-    c.add(txt(this, 360, 540, `所持 ×${have}`, 24, { color: '#6b5f8a', bold: false }));
 
+    const midY = GAME_H / 2;
+    // 大きなカード
+    const card = makePrizeView(this, p, { count: have, shiny });
+    card.setPosition(360, midY - 300).setScale(1.25);
+    c.add(card);
+
+    // 値札（紐でぶら下がる紙）
+    const tagY = midY + 20;
+    const tg = this.add.graphics();
+    tg.lineStyle(4, PAL.ink, 1);
+    tg.lineBetween(360, tagY - 120, 360, tagY - 70);
+    drawPlate(tg, 150, tagY - 70, 420, 170, PAL.paper, { radius: 14, shadow: 7, outline: 5, shine: false });
+    tg.fillStyle(PAL.ink, 1);
+    tg.fillCircle(360, tagY - 54, 7);
+    c.add(tg);
     const price = sellPrice(s, id);
-    c.add(txt(this, 360, 600, '1個の売値', 22, { color: '#6b5f8a', bold: false }));
-    c.add(txt(this, 360, 646, fmt(price), 60, { color: '#d18a00' }));
+    c.add(txt(this, 360, tagY - 22, '1個の売値', 22, { color: CSS.inkSoft }));
+    c.add(txt(this, 360, tagY + 26, fmt(price), 64, { color: CSS.bad }));
     const sat = saturationOf(s.market, id);
-    const detailLine = `基準 ${fmt(p.basePrice)}  ・  相場 ×${sm.trend.toFixed(2)} ${trendIcon(sm)}  ・  値崩れ ×${sat.toFixed(2)}`;
-    c.add(txt(this, 360, 704, detailLine, 20, { color: '#6b5f8a', bold: false }));
-    // TODO(Phase 2): イベント係数・レリック補正の内訳表示
+    const evMult = eventMult(s, p.seriesId);
+    const detailLine = `基準 ${fmt(p.basePrice)}${shiny ? ` × 色違い ${SHINY_MULT}` : ''} × 相場 ${sm.trend.toFixed(2)}${evMult !== 1 ? ` × イベント ${evMult.toFixed(1)}` : ''} × 値崩れ ${sat.toFixed(2)}${matchesOrder(s, id) ? ` × 注文 ${s.market.order!.mult}（あと ${s.market.order!.left} 個）` : ''}`;
+    c.add(txt(this, 360, tagY + 76, detailLine, 17, { color: CSS.inkSoft, bold: false, wrap: 400 }));
+    // TODO: 縁起物補正の内訳表示
 
     const total = estimateSellTotal(s, id, have);
-    const b1 = new Button(this, 210, 800, {
-      w: 260,
-      h: 104,
-      color: 0x4fd18b,
+    const by = tagY + 200;
+    if (isBanned(s, p.seriesId)) {
+      // 販売禁止：表では売れない。闇ルートなら半値で、摘発の危険あり
+      const dark = darkPrice(s, id);
+      const catchRate = Math.round(runHook(s, 'onDarkCatch', DARK_CATCH_RATE) * 100);
+      c.add(stamp(this, 360, tagY + 26, '販売禁止', 56, CSS.bad, { hold: Infinity, angle: -10, depth: 0 }));
+      const bd = new Button(this, 360, by, {
+        w: 480,
+        h: 108,
+        color: PAL.blood,
+        label: '闇ルートで1個売る',
+        sub: `+${fmt(dark)}（摘発 ${catchRate}%）`,
+        size: 30,
+        onPress: () => this.sellDarkOne(id),
+      });
+      const bc = new Button(this, 360, by + 130, { w: 260, h: 80, color: PAL.plum, label: '閉じる', size: 28, onPress: () => this.closeDetail() });
+      c.add([bd, bc]);
+      this.detail = c;
+      this.detailId = id;
+      return;
+    }
+    const b1 = new Button(this, 210, by, {
+      w: 270,
+      h: 108,
+      color: PAL.moss,
       label: '1個売る',
       sub: `+${fmt(price)}`,
       size: 30,
       onPress: () => this.sell(id, 1),
     });
-    const b2 = new Button(this, 510, 800, {
-      w: 260,
-      h: 104,
-      color: 0xffa531,
-      label: `全部売る`,
+    const b2 = new Button(this, 510, by, {
+      w: 270,
+      h: 108,
+      color: PAL.mustard,
+      label: '全部売る',
       sub: `×${have} → +${fmt(total)}`,
       size: 30,
       onPress: () => this.sell(id, have),
     });
-    const b3 = new Button(this, 360, 930, { w: 300, h: 80, color: 0x8a80a6, label: '閉じる', size: 28, onPress: () => this.closeDetail() });
+    const b3 = new Button(this, 360, by + 130, { w: 260, h: 80, color: PAL.plum, label: '閉じる', size: 28, onPress: () => this.closeDetail() });
     c.add([b1, b2, b3]);
-    c.setScale(0.96).setAlpha(0);
-    this.tweens.add({ targets: c, scale: 1, alpha: 1, duration: 120, ease: 'Back.easeOut' });
+    if (animate) {
+      card.setScale(0.2).setAngle(-30);
+      this.tweens.add({ targets: card, scale: 1.25, angle: 0, duration: 260, ease: 'Back.easeOut' });
+      c.setAlpha(0);
+      this.tweens.add({ targets: c, alpha: 1, duration: 140 });
+    }
+    twinkle(this, card, RARITY_INFO[p.rarity].index);
     this.detail = c;
     this.detailId = id;
   }
@@ -253,20 +437,61 @@ export class MarketScene extends Phaser.Scene {
     this.detailId = null;
   }
 
+  private sellDarkOne(id: string) {
+    const s = S();
+    const r = sellDark(s, id);
+    save();
+    const ox = 360;
+    const oy = GAME_H / 2 + 20;
+    if (r.caught) {
+      sfx.play('buzz');
+      sfx.play('stamp');
+      this.cameras.main.shake(300, 0.01);
+      stamp(this, ox, oy - 60, '摘発！', 72, CSS.bad, { hold: 900, depth: 1000 });
+      floatText(this, ox, oy + 40, `罰金 -${fmt(r.fine)}`, CSS.bad, 40);
+    } else {
+      sfx.play('coin', { rate: 0.8 });
+      this.flyCoins(4, ox, oy);
+      floatText(this, ox, oy - 100, `+${fmt(r.earned)}（闇）`, CSS.gold, 40);
+    }
+    this.time.delayedCall(380, () => this.hud.refresh(true));
+    this.renderList();
+    this.time.delayedCall(0, () => {
+      if ((s.inventory[id] ?? 0) > 0 && this.detailId === id) this.openDetail(id, false);
+      else this.closeDetail();
+    });
+  }
+
   private sell(id: string, n: number) {
     const s = S();
     let earned = 0;
-    for (let i = 0; i < n; i++) earned += sellOne(s, id);
+    let bigMult = 0;
+    for (let i = 0; i < n; i++) {
+      const r = sellOneEx(s, id);
+      earned += r.price;
+      if (r.bigSpender) bigMult = Math.max(bigMult, r.bigSpender);
+    }
     if (earned <= 0) return;
+    const best = s.totals.bestSale ?? 0;
+    if (earned > best) s.totals.bestSale = earned;
     save();
+    // 高額が出たら大当たりの演出（太客・返済額の 1/4 以上・ブームの日のまとめ売り）
+    const bigSale = earned >= Math.max(400, s.quota * 0.25);
+    if (bigMult > 0) jackpotFx(this, { heading: `太客！ ×${bigMult}`, amount: earned, sub: '言い値で買っていった！', big: bigSale });
+    else if (bigSale) jackpotFx(this, { heading: '大儲け！', amount: earned, sub: earned > best && best > 0 ? '過去最高の売上！' : undefined });
     sfx.play('coin', { rate: n > 1 ? 1.05 : 1 });
     if (n > 3) sfx.play('coin', { delay: 0.09, rate: 1.12, vol: 0.7 });
-    this.flyCoins(Math.min(12, 3 + n), 360, 800);
+    sfx.play('stamp', { vol: 0.5, delay: 0.05 });
+    const ox = 360;
+    const oy = GAME_H / 2 + 20;
+    this.flyCoins(Math.min(14, 3 + n), ox, oy);
+    floatText(this, ox, oy - 100, `+${fmt(earned)}`, CSS.gold, 46);
     this.time.delayedCall(380, () => this.hud.refresh(true));
     this.renderList();
+    this.refreshOrder();
     // 押したボタン自身を破棄するので、入力処理が終わってから作り直す
     this.time.delayedCall(0, () => {
-      if ((s.inventory[id] ?? 0) > 0 && this.detailId === id) this.openDetail(id);
+      if ((s.inventory[id] ?? 0) > 0 && this.detailId === id) this.openDetail(id, false);
       else this.closeDetail();
     });
   }
@@ -274,14 +499,14 @@ export class MarketScene extends Phaser.Scene {
   private flyCoins(n: number, x: number, y: number) {
     const t = this.hud.coinTarget();
     for (let i = 0; i < n; i++) {
-      const c = this.add.image(x + Phaser.Math.Between(-60, 60), y + Phaser.Math.Between(-30, 30), 'coin').setDepth(900);
+      const c = this.add.image(x + Phaser.Math.Between(-70, 70), y + Phaser.Math.Between(-30, 30), 'coin').setDepth(900);
       this.tweens.add({
         targets: c,
         x: t.x,
         y: t.y,
         scale: 0.6,
         delay: i * 35,
-        duration: 380,
+        duration: 420,
         ease: 'Cubic.easeIn',
         onComplete: () => {
           c.destroy();

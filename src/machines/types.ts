@@ -6,9 +6,17 @@ export interface MachineView {
   readonly def: GachaMachineDef;
   /** カプセルが出てくる位置 */
   readonly outlet: { x: number; y: number };
+  /** 機械の下端（画面座標） */
+  readonly bottom: number;
+  /** 出たカプセルのレア度に反応する（目・体のリアクション） */
+  react(rarityIndex: number): void;
+  /** 値札の表示を変える（縁起物でガチャ代が変わったとき） */
+  setPrice?(cost: number): void;
   destroy(): void;
   /** 他の UI が前面にある間などに入力を止める */
   setInputEnabled(on: boolean): void;
+  /** 入力を受け付けているか（ほかの画面が前面にないか） */
+  isInputEnabled?(): boolean;
 }
 
 export type MachineHooks = {
@@ -20,7 +28,12 @@ export type MachineHooks = {
   onDenied: (reason: string) => void;
 };
 
-export type MachineFactory = (scene: Phaser.Scene, def: GachaMachineDef, hooks: MachineHooks) => MachineView;
+export type MachineLayout = {
+  /** 機械の上端（画面座標） */
+  top: number;
+};
+
+export type MachineFactory = (scene: Phaser.Scene, def: GachaMachineDef, hooks: MachineHooks, layout: MachineLayout) => MachineView;
 
 const registry = new Map<MachineControl, MachineFactory>();
 
@@ -28,8 +41,8 @@ export function registerMachineView(control: MachineControl, f: MachineFactory) 
   registry.set(control, f);
 }
 
-export function createMachineView(scene: Phaser.Scene, def: GachaMachineDef, hooks: MachineHooks): MachineView {
+export function createMachineView(scene: Phaser.Scene, def: GachaMachineDef, hooks: MachineHooks, layout: MachineLayout): MachineView {
   const f = registry.get(def.control);
   if (!f) throw new Error(`machine view not registered: ${def.control}`);
-  return f(scene, def, hooks);
+  return f(scene, def, hooks, layout);
 }

@@ -1,17 +1,19 @@
 // バイト「カプセル詰め」：流れてくるカプセルの蓋を、タイミングよくタップして「パチッ」と閉める。
 import Phaser from 'phaser';
-import { CSS, GAME_W } from '../config';
+import { CSS, GAME_H, GAME_W, PAL } from '../config';
 import { sfx } from '../core/audio';
 import { pick, vibrate } from '../core/util';
 import type { Rarity } from '../data/rarity';
-import { txt } from '../ui/widgets';
+import { drawPlate, stamp, txt } from '../ui/widgets';
 import type { MiniGame, Reward } from './types';
 
-const BELT_Y = 780;
+// 縦長端末では全体を画面中央へ寄せる
+const OY = Math.round((GAME_H - 1280) / 2);
+const BELT_Y = 780 + OY;
 const ZONE_X = 360;
 const ZONE_HALF = 46;
 const PERFECT = 14;
-const HEAD_Y = 560;
+const HEAD_Y = 560 + OY;
 // TODO(balance): 報酬・速度は仮値
 const BONUS_THRESHOLD = 20;
 
@@ -48,51 +50,63 @@ export class CapsuleFillGame implements MiniGame {
   start(scene: Phaser.Scene): void {
     this.scene = scene;
 
-    // ベルトコンベア
-    if (!scene.textures.exists('belt')) {
-      const g = scene.make.graphics({}, false);
-      g.fillStyle(0x4a3f66, 1);
-      g.fillRect(0, 0, 64, 40);
-      g.fillStyle(0x5c5277, 1);
-      g.fillRect(0, 0, 30, 40);
-      g.generateTexture('belt', 64, 40);
-      g.destroy();
-    }
+    // ベルトコンベア（脚つき）
     const frame = scene.add.graphics();
-    frame.fillStyle(0x1b1430, 1);
-    frame.fillRect(0, BELT_Y + 18, GAME_W, 30);
-    this.belt = scene.add.tileSprite(GAME_W / 2, BELT_Y + 18, GAME_W, 40, 'belt');
+    frame.fillStyle(PAL.ink, 1);
+    for (const lx of [80, 300, 520, 680]) frame.fillRect(lx, BELT_Y + 30, 18, 150);
+    drawPlate(frame, -20, BELT_Y - 6, GAME_W + 40, 52, 0x5c4c60, { radius: 20, shadow: 8, outline: 5, shine: false });
+    this.belt = scene.add.tileSprite(GAME_W / 2, BELT_Y + 20, GAME_W + 40, 44, 'belt');
+    // ローラー
+    const rollers = scene.add.graphics();
+    for (let x = 30; x < GAME_W; x += 110) {
+      rollers.fillStyle(PAL.ink, 1);
+      rollers.fillCircle(x, BELT_Y + 20, 13);
+      rollers.fillStyle(0xa79cb8, 1);
+      rollers.fillCircle(x, BELT_Y + 20, 8);
+    }
 
-    // 判定ゾーン
+    // 判定ゾーン（ここ！）
     const zone = scene.add.graphics();
-    zone.fillStyle(0xffc531, 0.18);
-    zone.fillRect(ZONE_X - ZONE_HALF, HEAD_Y + 40, ZONE_HALF * 2, BELT_Y - HEAD_Y);
-    zone.lineStyle(3, 0xffc531, 0.6);
-    zone.strokeRect(ZONE_X - ZONE_HALF, HEAD_Y + 40, ZONE_HALF * 2, BELT_Y - HEAD_Y);
+    zone.fillStyle(PAL.mustard, 0.16);
+    zone.fillRoundedRect(ZONE_X - ZONE_HALF, HEAD_Y + 40, ZONE_HALF * 2, BELT_Y - HEAD_Y - 30, 10);
+    zone.lineStyle(4, PAL.mustard, 0.9);
+    zone.strokeRoundedRect(ZONE_X - ZONE_HALF, HEAD_Y + 40, ZONE_HALF * 2, BELT_Y - HEAD_Y - 30, 10);
+    scene.tweens.add({ targets: zone, alpha: 0.55, duration: 500, yoyo: true, repeat: -1 });
 
-    // プレス機
+    // プレス機（この子も付喪神）
     const post = scene.add.graphics();
-    post.fillStyle(0x5c5277, 1);
-    post.fillRect(ZONE_X - 120, 380, 240, 40);
-    post.fillRect(ZONE_X - 14, 400, 28, 120);
+    drawPlate(post, ZONE_X - 150, HEAD_Y - 200, 300, 70, PAL.vermilion, { radius: 18, shadow: 7, outline: 5 });
+    post.fillStyle(PAL.ink, 1);
+    post.fillRect(ZONE_X - 16, HEAD_Y - 130, 32, 110);
+    post.fillStyle(0xa79cb8, 1);
+    post.fillRect(ZONE_X - 9, HEAD_Y - 130, 18, 110);
+    // 目
+    for (const ex of [ZONE_X - 70, ZONE_X + 70]) {
+      post.fillStyle(PAL.ink, 1);
+      post.fillEllipse(ex, HEAD_Y - 166, 40, 34);
+      post.fillStyle(0xfff8e8, 1);
+      post.fillEllipse(ex, HEAD_Y - 166, 32, 26);
+      post.fillStyle(PAL.ink, 1);
+      post.fillCircle(ex, HEAD_Y - 160, 8);
+    }
     this.head = scene.add.container(ZONE_X, HEAD_Y);
     const hg = scene.add.graphics();
-    hg.fillStyle(0x7d7399, 1);
-    hg.fillRoundedRect(-56, -40, 112, 40, 10);
+    drawPlate(hg, -60, -44, 120, 40, 0x8a7f9a, { radius: 10, shadow: 0, outline: 5 });
     this.headLid = scene.add.image(0, 18, 'lid_N');
     this.head.add([hg, this.headLid]);
 
-    this.comboText = txt(scene, 360, 300, '', 44, { color: CSS.gold, stroke: '#1b1430', strokeThickness: 8 });
-    this.scoreText = txt(scene, 360, 960, '詰めた数 0', 32, { color: CSS.white });
-    txt(scene, 360, 1040, 'カプセルが黄色い枠に来たらタップ！', 26, { color: CSS.sub, bold: false });
+    this.comboText = txt(scene, 360, HEAD_Y - 290, '', 48, { color: CSS.gold, stroke: CSS.ink, strokeThickness: 9, shadow: true });
+    const sc = scene.add.graphics();
+    drawPlate(sc, 210, BELT_Y + 190, 300, 64, PAL.paper, { radius: 14, shadow: 6, outline: 5, shine: false });
+    this.scoreText = txt(scene, 360, BELT_Y + 222, '詰めた数 0', 32, { color: CSS.ink });
+    txt(scene, 360, BELT_Y + 300, 'カプセルが黄色い枠に来たらタップ！', 26, { color: CSS.cream, stroke: CSS.ink, strokeThickness: 5 });
 
     this.sparks = scene.add.particles(0, 0, 'spark', {
       emitting: false,
       speed: { min: 100, max: 300 },
-      scale: { start: 0.7, end: 0 },
+      scale: { start: 0.8, end: 0 },
       lifespan: 400,
       gravityY: 600,
-      blendMode: Phaser.BlendModes.ADD,
     });
 
     scene.input.on('pointerdown', this.onTap, this);
@@ -185,6 +199,10 @@ export class CapsuleFillGame implements MiniGame {
     this.sparks.explode(perfect ? 12 : 6, best.obj.x, BELT_Y - 40);
     this.scene.tweens.add({ targets: best.obj, scaleY: 0.85, duration: 50, yoyo: true });
     this.popText(perfect ? 'PERFECT!' : 'GOOD', perfect ? CSS.gold : CSS.good);
+    if (this.combo % 10 === 0) {
+      stamp(this.scene, 360, HEAD_Y - 220, `${this.combo}連鎖!!`, 56, CSS.gold, { hold: 500 });
+      sfx.play('sparkle', { rate: 1.1 });
+    }
     this.updateCombo();
     this.scoreText.setText(`詰めた数 ${this.closed}`);
   }
@@ -198,7 +216,7 @@ export class CapsuleFillGame implements MiniGame {
   }
 
   private popText(s: string, color: string) {
-    const t = txt(this.scene, ZONE_X, BELT_Y - 120, s, 30, { color, stroke: '#1b1430', strokeThickness: 6 });
+    const t = txt(this.scene, ZONE_X, BELT_Y - 120, s, 32, { color, stroke: CSS.ink, strokeThickness: 7 });
     this.scene.tweens.add({ targets: t, y: t.y - 50, alpha: 0, duration: 500, onComplete: () => t.destroy() });
   }
 
@@ -208,7 +226,7 @@ export class CapsuleFillGame implements MiniGame {
     return {
       coins: this.coins,
       bonus,
-      summary: `詰めた数 ${this.closed}（PERFECT ${this.perfects}） / 最大連鎖 ${this.maxCombo}`,
+      summary: `詰めた数 ${this.closed}（PERFECT ${this.perfects}）\n最大連鎖 ${this.maxCombo}`,
     };
   }
 
